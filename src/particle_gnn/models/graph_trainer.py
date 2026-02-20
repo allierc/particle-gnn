@@ -179,9 +179,9 @@ def data_train_particle(config, erase, best_model, device):
     logger.info(f'N epochs: {n_epochs}')
     logger.info(f'initial batch_size: {batch_size}')
 
-    x = torch.tensor(x_list[plot_config.data_embedding][0], dtype=torch.float32, device=device)
-    index_particles = get_index_particles(x, n_particle_types, dimension)
-    type_list = get_type_list(x, dimension)
+    x_plot = torch.tensor(x_list[plot_config.data_embedding][0], dtype=torch.float32, device=device)
+    index_particles = get_index_particles(x_plot, n_particle_types, dimension)
+    type_list = get_type_list(x_plot, dimension)
     print(f'N particles: {n_particles} {len(torch.unique(type_list))} types')
     logger.info(f'N particles:  {n_particles} {len(torch.unique(type_list))} types')
 
@@ -276,7 +276,7 @@ def data_train_particle(config, erase, best_model, device):
                         model.a[run, n_particles:n_particles + n_ghosts] = model.a[
                             run, ghosts_particles.embedding_index].clone().detach()  # sample ghost embedding
 
-                edge_index = edges_radius_blockwise(x, dimension, bc_dpos, min_radius, max_radius, block=4096)
+                edges = edges_radius_blockwise(x, dimension, bc_dpos, min_radius, max_radius, block=4096)
 
                 if batch_ratio < 1:
                     ids = np.random.permutation(x.shape[0])[:int(x.shape[0] * batch_ratio)]
@@ -410,7 +410,7 @@ def data_train_particle(config, erase, best_model, device):
 
             if ((epoch < 30) & (N % plot_frequency == 0)) | (N == 0):
                 plot_training(config=config, pred=pred, gt=y_batch, log_dir=log_dir,
-                              epoch=epoch, N=N, x=x, model=model, n_nodes=0, n_node_types=0, index_nodes=0,
+                              epoch=epoch, N=N, x=x_plot, model=model, n_nodes=0, n_node_types=0, index_nodes=0,
                               dataset_num=1,
                               index_particles=index_particles, n_particles=n_particles,
                               n_particle_types=n_particle_types, ynorm=ynorm, cmap=cmap, axis=True, device=device)
