@@ -56,7 +56,7 @@ def data_train_particle(config, erase, best_model, device):
     model_config = config.graph_model
     plot_config = config.plotting
 
-    print(f'training data ... {model_config.particle_model_name} {model_config.mesh_model_name}')
+    print(f'training data ... {model_config.particle_model_name}')
 
     dimension = simulation_config.dimension
     n_epochs = train_config.n_epochs
@@ -793,7 +793,7 @@ def data_test_particle(config=None, config_file=None, visualize=False, style='co
             print(f"Total Trainable Params: {total_params_f}")
 
     if verbose:
-        print(f'test data ... {model_config.particle_model_name} {model_config.mesh_model_name}')
+        print(f'test data ... {model_config.particle_model_name}')
         print('log_dir: {}'.format(log_dir))
         print(f'network: {net}')
         print(table)

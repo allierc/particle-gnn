@@ -88,7 +88,7 @@ def data_generate_particle(
     model_config = config.graph_model
 
     print(
-        f"generating data ... {model_config.particle_model_name} {model_config.mesh_model_name}"
+        f"generating data ... {model_config.particle_model_name}"
     )
 
     dimension = simulation_config.dimension
@@ -366,55 +366,6 @@ def data_generate_particle(
                         plt.savefig(
                             f"graphs_data/{dataset_name}/Fig/Rot_{run}_Fig{it}.jpg",
                             dpi=170.7,
-                        )
-                        plt.close()
-
-                    elif "PDE_N" in model_config.signal_model_name:
-                        matplotlib.rcParams["savefig.pad_inches"] = 0
-                        fig = plt.figure(figsize=(12, 12))
-                        ax = fig.add_subplot(1, 1, 1)
-                        ax.xaxis.set_major_locator(plt.MaxNLocator(3))
-                        ax.yaxis.set_major_locator(plt.MaxNLocator(3))
-                        ax.xaxis.set_major_formatter(FormatStrFormatter("%.1f"))
-                        ax.yaxis.set_major_formatter(FormatStrFormatter("%.1f"))
-                        plt.scatter(
-                            to_numpy(X1[:, 1]),
-                            to_numpy(X1[:, 0]),
-                            s=200,
-                            c=to_numpy(H1[:, 0]) * 3,
-                            cmap="viridis",
-                        )
-                        plt.colorbar()
-                        plt.xlim([-1.2, 1.2])
-                        plt.ylim([-1.2, 1.2])
-                        if "latex" in style:
-                            plt.xlabel(r"$x$", fontsize=78)
-                            plt.ylabel(r"$y$", fontsize=78)
-                            plt.xticks(fontsize=48.0)
-                            plt.yticks(fontsize=48.0)
-                        elif "frame" in style:
-                            plt.xlabel("x", fontsize=48)
-                            plt.ylabel("y", fontsize=48)
-                            plt.xticks(fontsize=48.0)
-                            plt.yticks(fontsize=48.0)
-                            ax.tick_params(axis="both", which="major", pad=15)
-                            plt.text(
-                                0,
-                                1.1,
-                                f"frame {it}",
-                                ha="left",
-                                va="top",
-                                transform=ax.transAxes,
-                                fontsize=48,
-                            )
-                        else:
-                            plt.xticks([])
-                            plt.yticks([])
-                        plt.tight_layout()
-                        num = f"{it:06}"
-                        plt.savefig(
-                            f"graphs_data/{dataset_name}/Fig/Fig_{run}_{num}.tif",
-                            dpi=70,
                         )
                         plt.close()
 

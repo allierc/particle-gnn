@@ -83,6 +83,8 @@ class SimulationConfig(BaseModel):
     tau: float = 1.0
     sigma: float = 0.005
 
+    non_discrete_level: float = 0
+
     state_type: Literal["discrete", "sequence", "continuous"] = "discrete"
     state_params: list[float] = [-1]
 
@@ -128,6 +130,12 @@ class GraphModelConfig(BaseModel):
     hidden_dim_update: int = 64
     output_size_update: int = 1
     init_update_gradient: bool = False
+
+    input_size_nnr: int = 3
+    n_layers_nnr: int = 5
+    hidden_dim_nnr: int = 128
+    output_size_nnr: int = 1
+    omega: float = 80.0
 
     kernel_type: str = "mlp"
 
@@ -207,6 +215,7 @@ class TrainingConfig(BaseModel):
 
     learning_rate_end: float = 0.0005
     learning_rate_embedding_end: float = 0.0001
+    learning_rate_NNR: float = 0.0001
 
     coeff_loss1: float = 1
 
@@ -226,6 +235,10 @@ class TrainingConfig(BaseModel):
     recursive_loop: int = 0
     coeff_loop: list[float] = [2, 4, 8, 16, 32, 64]
     time_step: int = 1
+    do_tracking: bool = False
+    coeff_model_a: float = 0
+    coeff_continuous: float = 0
+
     recursive_sequence: str = ""
     recursive_parameters: list[float] = [0, 0]
 
