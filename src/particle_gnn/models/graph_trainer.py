@@ -17,6 +17,10 @@ import random
 from particle_gnn.models.utils import *
 from particle_gnn.utils import *
 from particle_gnn.models.Siren_Network import *
+from particle_gnn.plot import (
+    plot_training, plot_training_particle_field, analyze_edge_function,
+    get_embedding, build_edge_features, batched_sparsity_mlp_eval,
+)
 from particle_gnn.sparsify import EmbeddingCluster, sparsify_cluster, clustering_evaluation
 from particle_gnn.generators.utils import choose_model
 from particle_gnn.fitting_models import linear_model
@@ -316,11 +320,11 @@ def data_train_particle(config, erase, best_model, device):
                 rr = torch.linspace(0, max_radius, 1000, dtype=torch.float32, device=device)
                 for n in np.random.permutation(n_particles)[:n_particles // 100]:
                     embedding_ = model.a[0, n, :] * torch.ones((1000, mc.embedding_dim), device=device)
-                    in_features = get_in_features(rr=rr + sim.max_radius / 200, embedding=embedding_,
-                                                  model=model, model_name=config.graph_model.particle_model_name,
+                    in_features = build_edge_features(rr=rr + sim.max_radius / 200, embedding=embedding_,
+                                                  model_name=config.graph_model.particle_model_name,
                                                   max_radius=sim.max_radius)
                     func1 = model.lin_edge(in_features)
-                    in_features = get_in_features(rr=rr, embedding=embedding_, model=model,
+                    in_features = build_edge_features(rr=rr, embedding=embedding_,
                                                   model_name=config.graph_model.particle_model_name,
                                                   max_radius=sim.max_radius)
                     func0 = model.lin_edge(in_features)
@@ -485,35 +489,14 @@ def data_train_particle(config, erase, best_model, device):
 
                     lr_embedding = 1E-12
                     optimizer, n_total_params = set_trainable_parameters(model, lr_embedding, lr)
+                    rr = torch.tensor(np.linspace(0, max_radius, 1000)).to(device)
+                    all_embeddings = model.a[0, :n_particles, :].clone().detach()
+                    features = build_edge_features(rr, all_embeddings, mc.particle_model_name, max_radius)
+                    N_feat, n_pts, input_dim = features.shape
                     for sub_epochs in range(20):
-                        loss = 0
-                        rr = torch.tensor(np.linspace(0, max_radius, 1000)).to(device)
-                        pred = []
                         optimizer.zero_grad()
-                        for n in range(n_particles):
-                            embedding_ = model.a[0, n, :].clone().detach() * torch.ones(
-                                (1000, mc.embedding_dim), device=device)
-                            match mc.particle_model_name:
-                                case 'PDE_ParticleField_A' | 'PDE_A':
-                                    in_features = torch.cat(
-                                        (rr[:, None] / sim.max_radius, 0 * rr[:, None],
-                                         rr[:, None] / sim.max_radius, embedding_), dim=1)
-                                case 'PDE_ParticleField_B' | 'PDE_B':
-                                    in_features = torch.cat(
-                                        (rr[:, None] / sim.max_radius, 0 * rr[:, None],
-                                         rr[:, None] / sim.max_radius, 0 * rr[:, None],
-                                         0 * rr[:, None],
-                                         0 * rr[:, None], 0 * rr[:, None], embedding_), dim=1)
-                                case 'PDE_G':
-                                    in_features = torch.cat((rr[:, None] / max_radius, 0 * rr[:, None],
-                                                             rr[:, None] / max_radius, 0 * rr[:, None],
-                                                             0 * rr[:, None],
-                                                             0 * rr[:, None], 0 * rr[:, None], embedding_), dim=1)
-                                case 'PDE_E':
-                                    in_features = torch.cat((rr[:, None] / max_radius, 0 * rr[:, None],
-                                                             rr[:, None] / max_radius, embedding_, embedding_), dim=1)
-                            pred.append(model.lin_edge(in_features.float()))
-                        pred = torch.stack(pred)
+                        pred_flat = model.lin_edge(features.reshape(N_feat * n_pts, input_dim).float())
+                        pred = pred_flat.reshape(N_feat, n_pts, -1)
                         loss = (pred[:, :, 0] - y_func_list.clone().detach()).norm(2)
                         logger.info(f'    loss: {np.round(loss.item() / n_particles, 3)}')
                         loss.backward()
@@ -897,11 +880,9 @@ def data_test_particle(config=None, config_file=None, visualize=False, style='co
                 plt.yticks([])
 
                 if 'zoom' in style:
-                    for m in range(x.shape[0]):
-                        plt.arrow(x=to_numpy(x0[m, pos_start + 1]), y=to_numpy(x0[m, pos_start]),
-                                  dx=to_numpy(x[m, vel_start + 1]) * delta_t,
-                                  dy=to_numpy(x[m, vel_start]) * delta_t, head_width=0.004,
-                                  length_includes_head=True, color='g')
+                    ax.quiver(to_numpy(x0[:, pos_start + 1]), to_numpy(x0[:, pos_start]),
+                              to_numpy(x[:, vel_start + 1]) * delta_t, to_numpy(x[:, vel_start]) * delta_t,
+                              color='g', angles='xy', scale_units='xy', scale=1, width=0.002)
                     plt.xlim([300, 400])
                     plt.ylim([300, 400])
                 else:
@@ -976,23 +957,25 @@ def data_test_particle(config=None, config_file=None, visualize=False, style='co
                 plt.text(0, 1.1, f'   ', ha='left', va='top', transform=ax.transAxes, fontsize=48)
                 ax.tick_params(axis='both', which='major', pad=15)
             if 'arrow' in style:
-                for m in range(x.shape[0]):
-                    if x[m, vel_start + 1] != 0:
-                        if 'speed' in style:
-                            plt.arrow(x=to_numpy(x[m, pos_start + 1]), y=to_numpy(x[m, pos_start]),
-                                      dx=to_numpy(x[m, vel_start + 1]) * delta_t * 2,
-                                      dy=to_numpy(x[m, vel_start]) * delta_t * 2, head_width=0.004, length_includes_head=True,
-                                      color='g')
-                        if 'acc_true' in style:
-                            plt.arrow(x=to_numpy(x[m, pos_start + 1]), y=to_numpy(x[m, pos_start]),
-                                      dx=to_numpy(y0[m, 1]) / 5E3,
-                                      dy=to_numpy(y0[m, 0]) / 5E3, head_width=0.004, length_includes_head=True,
-                                      color='r')
-                        if 'acc_learned' in style:
-                            plt.arrow(x=to_numpy(x[m, pos_start + 1]), y=to_numpy(x[m, pos_start]),
-                                      dx=to_numpy(pred[m, 1] * ynorm.squeeze()) / 5E3,
-                                      dy=to_numpy(pred[m, 0] * ynorm.squeeze()) / 5E3, head_width=0.004,
-                                      length_includes_head=True, color='r')
+                mask = to_numpy(x[:, vel_start + 1]) != 0
+                px = to_numpy(x[:, pos_start + 1])
+                py = to_numpy(x[:, pos_start])
+                if 'speed' in style:
+                    ax.quiver(px[mask], py[mask],
+                              to_numpy(x[:, vel_start + 1])[mask] * delta_t * 2,
+                              to_numpy(x[:, vel_start])[mask] * delta_t * 2,
+                              color='g', angles='xy', scale_units='xy', scale=1, width=0.002)
+                if 'acc_true' in style:
+                    ax.quiver(px[mask], py[mask],
+                              to_numpy(y0[:, 1])[mask] / 5E3,
+                              to_numpy(y0[:, 0])[mask] / 5E3,
+                              color='r', angles='xy', scale_units='xy', scale=1, width=0.002)
+                if 'acc_learned' in style:
+                    ynorm_s = to_numpy(ynorm.squeeze())
+                    ax.quiver(px[mask], py[mask],
+                              to_numpy(pred[:, 1])[mask] * ynorm_s / 5E3,
+                              to_numpy(pred[:, 0])[mask] * ynorm_s / 5E3,
+                              color='r', angles='xy', scale_units='xy', scale=1, width=0.002)
                 plt.xlim([0, 1])
                 plt.ylim([0, 1])
             if 'name' in style:
@@ -1422,27 +1405,14 @@ def data_train_particle_field(config, erase, best_model, device):
 
                 lr_embedding = 1E-12
                 optimizer, n_total_params = set_trainable_parameters(model, lr_embedding, lr)
+                rr = torch.tensor(np.linspace(0, max_radius, 1000)).to(device)
+                all_embeddings = model.a[0, :n_particles, :].clone().detach()
+                features = build_edge_features(rr, all_embeddings, mc.particle_model_name, max_radius)
+                N_feat, n_pts, input_dim = features.shape
                 for sub_epochs in range(20):
-                    loss = 0
-                    rr = torch.tensor(np.linspace(0, max_radius, 1000)).to(device)
-                    pred = []
                     optimizer.zero_grad()
-                    for n in range(n_particles):
-                        embedding_ = model.a[0, n, :].clone().detach() * torch.ones(
-                            (1000, mc.embedding_dim), device=device)
-                        match mc.particle_model_name:
-                            case 'PDE_ParticleField_A':
-                                in_features = torch.cat(
-                                    (rr[:, None] / sim.max_radius, 0 * rr[:, None],
-                                     rr[:, None] / sim.max_radius, embedding_), dim=1)
-                            case 'PDE_ParticleField_B':
-                                in_features = torch.cat(
-                                    (rr[:, None] / sim.max_radius, 0 * rr[:, None],
-                                     rr[:, None] / sim.max_radius, 0 * rr[:, None],
-                                     0 * rr[:, None],
-                                     0 * rr[:, None], 0 * rr[:, None], embedding_), dim=1)
-                        pred.append(model.lin_edge(in_features.float()))
-                    pred = torch.stack(pred)
+                    pred_flat = model.lin_edge(features.reshape(N_feat * n_pts, input_dim).float())
+                    pred = pred_flat.reshape(N_feat, n_pts, -1)
                     loss = (pred[:, :, 0] - y_func_list.clone().detach()).norm(2)
                     logger.info(f'    loss: {np.round(loss.item() / n_particles, 3)}')
                     loss.backward()
