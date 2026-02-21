@@ -1007,43 +1007,6 @@ def data_test_particle(config=None, config_file=None, visualize=False, style='co
             if 'PDE_G' in mc.particle_model_name:
                 plt.xlim([-2, 2])
                 plt.ylim([-2, 2])
-
-                masses = torch.tensor(
-                    [1.989e30, 3.30e23, 4.87e24, 5.97e24, 6.42e23, 1.90e27, 5.68e26, 8.68e25, 1.02e26, 1.31e22,
-                     8.93e22, 4.80e22, 1.48e23, 1.08e23, 3.75e19, 1.08e20,
-                     6.18e20, 1.10e21, 2.31e21, 1.35e23, 5.62e18, 7.35e22, 1.07e16, 1.48e15, 1.52e21],
-                    device=device)
-
-                pos = x[:, pos_start:pos_end]
-                distance = torch.sqrt(torch.sum(bc_dpos(pos[:, None, :] - pos[None, 0, :]) ** 2, dim=2))
-                unit_vector = pos / distance
-
-                if it == 0:
-                    log_coeff = torch.log(distance[1:])
-                    log_coeff_min = torch.min(log_coeff)
-                    log_coeff_max = torch.max(log_coeff)
-                    log_coeff_edge_diff = log_coeff_max - log_coeff_min
-                    d_log = [log_coeff_min, log_coeff_max, log_coeff_edge_diff]
-
-                    log_coeff = torch.log(masses)
-                    log_coeff_min = torch.min(log_coeff)
-                    log_coeff_max = torch.max(log_coeff)
-                    log_coeff_edge_diff = log_coeff_max - log_coeff_min
-                    m_log = [log_coeff_min, log_coeff_max, log_coeff_edge_diff]
-
-                    m_ = torch.log(masses) / m_log[2]
-
-                distance_ = (torch.log(distance) - d_log[0]) / d_log[2]
-                pos = distance_ * unit_vector
-                pos = to_numpy(pos)
-                pos[0] = 0
-
-                for n in range(25):
-                    plt.scatter(pos[n, 1], pos[n, 0], s=200 * to_numpy(m_[n] ** 3), color=cmap.color(n))
-                plt.xlim([-1.2, 1.2])
-                plt.ylim([-1.2, 1.2])
-                plt.xticks([])
-                plt.yticks([])
             plt.tight_layout()
             plt.savefig(f"./{log_dir}/tmp_recons/Fig_{config_file}_{run}_{num}.tif", dpi=100)
             plt.close()

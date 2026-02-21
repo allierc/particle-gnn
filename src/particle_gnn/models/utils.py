@@ -92,9 +92,6 @@ def get_in_features(rr=None, embedding=None, model=[], model_name=[], max_radius
             in_features = torch.cat((rr[:, None] / max_radius, 0 * rr[:, None],
                                      torch.abs(rr[:, None]) / max_radius, 0 * rr[:, None], 0 * rr[:, None],
                                      0 * rr[:, None], 0 * rr[:, None], embedding), dim=1)
-        case 'PDE_GS':
-            in_features = torch.cat(
-                (rr[:, None] / max_radius, 0 * rr[:, None], rr[:, None] / max_radius, 10 ** embedding), dim=1)
         case 'PDE_G':
             in_features = torch.cat((rr[:, None] / max_radius, 0 * rr[:, None],
                                      rr[:, None] / max_radius, 0 * rr[:, None],
@@ -203,8 +200,6 @@ def analyze_edge_function(rr=[], vizualize=False, config=None, model_MLP=[], mod
     if rr == []:
         if config_model == 'PDE_G':
             rr = torch.tensor(np.linspace(0, max_radius * 1.3, 1000)).to(device)
-        elif config_model == 'PDE_GS':
-            rr = torch.tensor(np.logspace(7, 9, 1000)).to(device)
         else:
             rr = torch.tensor(np.linspace(0, max_radius, 1000)).to(device)
 
@@ -237,7 +232,7 @@ def analyze_edge_function(rr=[], vizualize=False, config=None, model_MLP=[], mod
         should_plot = vizualize and (
                 n_particles <= 200 or
                 (n % (n_particles // 200) == 0) or
-                (config.graph_model.particle_model_name == 'PDE_GS')
+                False
         )
 
         if should_plot:
@@ -254,9 +249,6 @@ def analyze_edge_function(rr=[], vizualize=False, config=None, model_MLP=[], mod
     func_list_ = to_numpy(func_list)
 
     if vizualize:
-        if config.graph_model.particle_model_name == 'PDE_GS':
-            plt.xscale('log')
-            plt.yscale('log')
         if config.graph_model.particle_model_name == 'PDE_G':
             plt.xlim([1E-3, 0.02])
         plt.ylim(config.plotting.ylim)

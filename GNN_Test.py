@@ -201,6 +201,7 @@ def run_training_cluster(config_name, root_dir, log_dir):
     cluster_root_dir = f"{cluster_home}/Graph/particle-gnn"
 
     cluster_train_cmd = f"python GNN_Main.py -o train {config_name}"
+    cluster_log = f"{cluster_root_dir}/log/{config_name}/{config_name}/cluster_train.log"
 
     cluster_script_path = os.path.join(log_dir, 'cluster_test_train.sh')
     with open(cluster_script_path, 'w') as f:
@@ -214,6 +215,7 @@ def run_training_cluster(config_name, root_dir, log_dir):
     ssh_cmd = (
         f"ssh allierc@login1 \"cd {cluster_root_dir} && "
         f"bsub -n 8 -gpu 'num=1' -q gpu_h100 -W 6000 -K "
+        f"-o {cluster_log} -e {cluster_log} "
         f"'bash {cluster_script}'\""
     )
 
@@ -224,6 +226,13 @@ def run_training_cluster(config_name, root_dir, log_dir):
         print(f"\033[91mcluster training failed:\033[0m")
         print(f"stdout: {result.stdout}")
         print(f"stderr: {result.stderr}")
+        # fetch the cluster log for diagnostics
+        local_log = os.path.join(log_dir, 'cluster_train.log')
+        scp_cmd = f"scp allierc@login1:{cluster_log} {local_log}"
+        scp = subprocess.run(scp_cmd, shell=True, capture_output=True, text=True)
+        if scp.returncode == 0 and os.path.exists(local_log):
+            with open(local_log) as f:
+                print(f"\033[93mcluster log:\033[0m\n{f.read()}")
         raise RuntimeError("cluster training failed")
 
     print(f"\033[92mcluster training completed\033[0m")
@@ -237,6 +246,7 @@ def run_test_cluster(config_name, root_dir, log_dir):
     cluster_root_dir = f"{cluster_home}/Graph/particle-gnn"
 
     cluster_cmd = f"python GNN_Main.py -o test {config_name} best"
+    cluster_log = f"{cluster_root_dir}/log/{config_name}/{config_name}/cluster_test.log"
 
     cluster_script_path = os.path.join(log_dir, 'cluster_test_test.sh')
     with open(cluster_script_path, 'w') as f:
@@ -250,6 +260,7 @@ def run_test_cluster(config_name, root_dir, log_dir):
     ssh_cmd = (
         f"ssh allierc@login1 \"cd {cluster_root_dir} && "
         f"bsub -n 8 -gpu 'num=1' -q gpu_h100 -W 6000 -K "
+        f"-o {cluster_log} -e {cluster_log} "
         f"'bash {cluster_script}'\""
     )
 
@@ -260,6 +271,13 @@ def run_test_cluster(config_name, root_dir, log_dir):
         print(f"\033[91mcluster test failed:\033[0m")
         print(f"stdout: {result.stdout}")
         print(f"stderr: {result.stderr}")
+        # fetch the cluster log for diagnostics
+        local_log = os.path.join(log_dir, 'cluster_test.log')
+        scp_cmd = f"scp allierc@login1:{cluster_log} {local_log}"
+        scp = subprocess.run(scp_cmd, shell=True, capture_output=True, text=True)
+        if scp.returncode == 0 and os.path.exists(local_log):
+            with open(local_log) as f:
+                print(f"\033[93mcluster log:\033[0m\n{f.read()}")
         raise RuntimeError("cluster test failed")
 
     print(f"\033[92mcluster test completed\033[0m")

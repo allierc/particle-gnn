@@ -11,7 +11,7 @@ simulation:
   delta_t: 3.0E-5
   dpos_init: 5.0E-5
   boundary: "no"
-  start_frame: 0 # -1000
+  start_frame: -250
 
 graph_model:
   particle_model_name: "PDE_G"
@@ -38,7 +38,7 @@ training:
   n_runs: 1
   sparsity: "replace_embedding_function"
   rotation_augmentation: True
-  data_augmentation_loop: 20
+  data_augmentation_loop: 100
   cluster_method: "distance_plot"
   fix_cluster_embedding: True
   device: "auto"
