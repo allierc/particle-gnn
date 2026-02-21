@@ -55,47 +55,45 @@ def data_train(config=None, erase=False, best_model=None, device=None):
 
 
 def data_train_particle(config, erase, best_model, device):
-    simulation_config = config.simulation
-    train_config = config.training
-    model_config = config.graph_model
-    plot_config = config.plotting
+    sim = config.simulation
+    tc = config.training
+    mc = config.graph_model
+    pc = config.plotting
 
-    print(f'training data ... {model_config.particle_model_name}')
+    print(f'training data ... {mc.particle_model_name}')
 
-    dimension = simulation_config.dimension
-    n_epochs = train_config.n_epochs
-    max_radius = simulation_config.max_radius
-    min_radius = simulation_config.min_radius
-    n_particles = simulation_config.n_particles
-    n_particle_types = simulation_config.n_particle_types
-    delta_t = simulation_config.delta_t
-    time_window = train_config.time_window
-    time_step = train_config.time_step
-    field_type = model_config.field_type
-    omega = model_config.omega
-
-    # noise_level = train_config.noise_level
+    dimension = sim.dimension
+    n_particles = sim.n_particles
+    n_particle_types = sim.n_particle_types
+    n_frames = sim.n_frames
+    max_radius = sim.max_radius
+    min_radius = sim.min_radius
+    delta_t = sim.delta_t
+    n_epochs = tc.n_epochs
+    time_window = tc.time_window
+    time_step = tc.time_step
+    data_augmentation_loop = tc.data_augmentation_loop
+    recursive_loop = tc.recursive_loop
+    coeff_continuous = tc.coeff_continuous
+    batch_ratio = tc.batch_ratio
+    sparsity_freq = tc.sparsity_freq
     dataset_name = config.dataset
-    n_frames = simulation_config.n_frames
+    field_type = mc.field_type
+    omega = mc.omega
 
-    data_augmentation_loop = train_config.data_augmentation_loop
-    recursive_loop = train_config.recursive_loop
-    coeff_continuous = train_config.coeff_continuous
-    target_batch_size = train_config.batch_size
-    replace_with_cluster = 'replace' in train_config.sparsity
-    sparsity_freq = train_config.sparsity_freq
-    has_ghost_particles = train_config.n_ghosts > 0
-    has_bounding_box = 'PDE_F' in model_config.particle_model_name
-    n_ghosts = train_config.n_ghosts
-    if train_config.small_init_batch_size:
+    target_batch_size = tc.batch_size
+    replace_with_cluster = 'replace' in tc.sparsity
+    has_ghost_particles = tc.n_ghosts > 0
+    has_bounding_box = 'PDE_F' in mc.particle_model_name
+    n_ghosts = tc.n_ghosts
+    if tc.small_init_batch_size:
         get_batch_size = increasing_batch_size(target_batch_size)
     else:
         get_batch_size = constant_batch_size(target_batch_size)
-    batch_ratio = train_config.batch_ratio
     batch_size = get_batch_size(0)
-    cmap = CustomColorMap(config=config)  # create colormap for given model_config
+    cmap = CustomColorMap(config=config)
     embedding_cluster = EmbeddingCluster(config)
-    n_runs = train_config.n_runs
+    n_runs = tc.n_runs
 
     log_dir, logger = create_log_dir(config, erase)
     print(f'graph files N: {n_runs}')
@@ -109,7 +107,7 @@ def data_train_particle(config, erase, best_model, device):
     time.sleep(0.5)
     n_particles_max = 0
 
-    for run in trange(n_runs, ncols=80):
+    for run in trange(n_runs, ncols=100):
         x = np.load(f'graphs_data/{dataset_name}/x_list_{run}.npy')
         y = np.load(f'graphs_data/{dataset_name}/y_list_{run}.npy')
         if np.isnan(x).any() | np.isnan(y).any():
@@ -122,7 +120,7 @@ def data_train_particle(config, erase, best_model, device):
     x = torch.tensor(x_list[0][0], dtype=torch.float32, device=device)
     y = torch.tensor(y_list[0][0], dtype=torch.float32, device=device)
     time.sleep(0.5)
-    for run in trange(0, n_runs, max(n_runs // 10, 1), ncols=80):
+    for run in trange(0, n_runs, max(n_runs // 10, 1), ncols=100):
         for k in range(run_lengths[run] - 5):
             if (k % 10 == 0) | (n_frames < 1000):
                 try:
@@ -161,11 +159,11 @@ def data_train_particle(config, erase, best_model, device):
     else:
         start_epoch = 0
         net = f"{log_dir}/models/best_model_with_{n_runs - 1}_graphs.pt"
-    if 'PDE_K' in model_config.particle_model_name:
+    if 'PDE_K' in mc.particle_model_name:
         model.connection_matrix = torch.load(f'graphs_data/{dataset_name}/connection_matrix_list.pt', map_location=device)
 
-    lr = train_config.learning_rate_start
-    lr_embedding = train_config.learning_rate_embedding_start
+    lr = tc.learning_rate_start
+    lr_embedding = tc.learning_rate_embedding_start
     optimizer, n_total_params = set_trainable_parameters(model, lr_embedding, lr)
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
 
@@ -179,7 +177,7 @@ def data_train_particle(config, erase, best_model, device):
     logger.info(f'N epochs: {n_epochs}')
     logger.info(f'initial batch_size: {batch_size}')
 
-    x_plot = torch.tensor(x_list[plot_config.data_embedding][0], dtype=torch.float32, device=device)
+    x_plot = torch.tensor(x_list[0][0], dtype=torch.float32, device=device)
     index_particles = get_index_particles(x_plot, n_particle_types, dimension)
     type_list = get_type_list(x_plot, dimension)
     print(f'N particles: {n_particles} {len(torch.unique(type_list))} types')
@@ -192,7 +190,7 @@ def data_train_particle(config, erase, best_model, device):
         mask_ghost = np.tile(mask_ghost, batch_size)
         mask_ghost = np.argwhere(mask_ghost == 1)
         mask_ghost = mask_ghost[:, 0].astype(int)
-    if simulation_config.state_type == 'sequence':
+    if sim.state_type == 'sequence':
         ind_a = torch.tensor(np.arange(1, n_particles * 100), device=device)
         pos = torch.argwhere(ind_a % 100 != 99).squeeze()
         ind_a = ind_a[pos]
@@ -201,12 +199,12 @@ def data_train_particle(config, erase, best_model, device):
         print('create Siren network')
         has_field = True
         n_nodes_per_axis = int(np.sqrt(n_particles))
-        model_f = Siren_Network(image_width=n_nodes_per_axis, in_features=model_config.input_size_nnr,
-                                out_features=model_config.output_size_nnr, hidden_features=model_config.hidden_dim_nnr,
-                                hidden_layers=model_config.n_layers_nnr, outermost_linear=True, device=device,
+        model_f = Siren_Network(image_width=n_nodes_per_axis, in_features=mc.input_size_nnr,
+                                out_features=mc.output_size_nnr, hidden_features=mc.hidden_dim_nnr,
+                                hidden_layers=mc.n_layers_nnr, outermost_linear=True, device=device,
                                 first_omega_0=omega, hidden_omega_0=omega)
         model_f.to(device=device)
-        optimizer_f = torch.optim.Adam(lr=train_config.learning_rate_NNR, params=model_f.parameters())
+        optimizer_f = torch.optim.Adam(lr=tc.learning_rate_NNR, params=model_f.parameters())
         model_f.train()
     else:
         has_field = False
@@ -217,7 +215,7 @@ def data_train_particle(config, erase, best_model, device):
     list_loss = []
 
     time.sleep(1)
-    for epoch in range(start_epoch, n_epochs + 1):
+    for epoch in range(start_epoch, n_epochs):
 
         logger.info(f"Total allocated memory: {torch.cuda.memory_allocated(device) / 1024 ** 3:.2f} GB")
         logger.info(f"Total reserved memory:  {torch.cuda.memory_reserved(device) / 1024 ** 3:.2f} GB")
@@ -234,7 +232,7 @@ def data_train_particle(config, erase, best_model, device):
         if batch_ratio < 1:
             Niter = int(n_frames * data_augmentation_loop // batch_size / batch_ratio)
         else:
-            Niter = n_frames * data_augmentation_loop // batch_size * (n_runs - 1)
+            Niter = n_frames * data_augmentation_loop // batch_size
         plot_frequency = int(Niter // 20)
 
         if epoch == 0:
@@ -245,7 +243,7 @@ def data_train_particle(config, erase, best_model, device):
         time.sleep(1)
         total_loss = 0
 
-        for N in trange(Niter, ncols=80):
+        for N in trange(Niter, ncols=100):
 
             if has_field:
                 optimizer_f.zero_grad()
@@ -256,7 +254,7 @@ def data_train_particle(config, erase, best_model, device):
             loss = 0
             for batch in range(batch_size):
 
-                run = 1 + np.random.randint(n_runs - 1)
+                run = 0
                 k = time_window + np.random.randint(run_lengths[run] - 1 - time_window - time_step - recursive_loop)
                 x = torch.tensor(x_list[run][k], dtype=torch.float32, device=device).clone().detach()
                 if has_field:
@@ -303,7 +301,7 @@ def data_train_particle(config, erase, best_model, device):
                     y = torch.tensor(x_list[run][k + time_step, :, 1:dimension + 1], dtype=torch.float32,
                                      device=device).clone().detach()
 
-                if train_config.shared_embedding:
+                if tc.shared_embedding:
                     run = 1
                 if batch == 0:
                     data_id = torch.ones((y.shape[0], 1), dtype=torch.int) * run
@@ -339,7 +337,7 @@ def data_train_particle(config, erase, best_model, device):
 
                         X1 = x[:, 1:dimension + 1]
                         V1 = x[:, dimension + 1:2 * dimension + 1]
-                        if model_config.prediction == '2nd_derivative':
+                        if mc.prediction == '2nd_derivative':
                             V1 += pred[ids_index:ids_index + x.shape[0]] * ynorm * delta_t
                         else:
                             V1 = pred[ids_index:ids_index + x.shape[0]] * ynorm
@@ -355,20 +353,20 @@ def data_train_particle(config, erase, best_model, device):
 
             if has_ghost_particles:
                 loss = ((pred[mask_ghost] - y_batch)).norm(2)
-            if simulation_config.state_type == 'sequence':
+            if sim.state_type == 'sequence':
                 loss = (pred - y_batch).norm(2)
-                loss = loss + train_config.coeff_model_a * (model.a[run, ind_a + 1] - model.a[run, ind_a]).norm(2)
+                loss = loss + tc.coeff_model_a * (model.a[run, ind_a + 1] - model.a[run, ind_a]).norm(2)
             if (coeff_continuous > 0) & (epoch > 0):
                 rr = torch.linspace(0, max_radius, 1000, dtype=torch.float32, device=device)
                 for n in np.random.permutation(n_particles)[:n_particles // 100]:
-                    embedding_ = model.a[1, n, :] * torch.ones((1000, model_config.embedding_dim), device=device)
-                    in_features = get_in_features(rr=rr + simulation_config.max_radius / 200, embedding=embedding_,
+                    embedding_ = model.a[0, n, :] * torch.ones((1000, mc.embedding_dim), device=device)
+                    in_features = get_in_features(rr=rr + sim.max_radius / 200, embedding=embedding_,
                                                   model=model, model_name=config.graph_model.particle_model_name,
-                                                  max_radius=simulation_config.max_radius)
+                                                  max_radius=sim.max_radius)
                     func1 = model.lin_edge(in_features)
                     in_features = get_in_features(rr=rr, embedding=embedding_, model=model,
                                                   model_name=config.graph_model.particle_model_name,
-                                                  max_radius=simulation_config.max_radius)
+                                                  max_radius=sim.max_radius)
                     func0 = model.lin_edge(in_features)
                     grad = func1 - func0
                     loss = loss + coeff_continuous * grad.norm(2)
@@ -385,7 +383,7 @@ def data_train_particle(config, erase, best_model, device):
                 else:
                     loss = (pred - y_batch).norm(2)
             elif time_step > 1:
-                if model_config.prediction == '2nd_derivative':
+                if mc.prediction == '2nd_derivative':
                     x_pos_pred = x_batch[:, 1:dimension + 1] + delta_t * time_step * (
                                 x_batch[:, dimension + 1:2 * dimension + 1] + delta_t * time_step * pred * ynorm)
                 else:
@@ -451,13 +449,13 @@ def data_train_particle(config, erase, best_model, device):
         plt.ylabel('Loss', fontsize=12)
         plt.xlabel('Epochs', fontsize=12)
 
-        if ('PDE_T' not in model_config.particle_model_name) & ('PDE_K' not in model_config.particle_model_name) & (
-                'PDE_MLPs' not in model_config.particle_model_name) & (
-                'PDE_F' not in model_config.particle_model_name) & ('PDE_M' not in model_config.particle_model_name) & (
+        if ('PDE_T' not in mc.particle_model_name) & ('PDE_K' not in mc.particle_model_name) & (
+                'PDE_MLPs' not in mc.particle_model_name) & (
+                'PDE_F' not in mc.particle_model_name) & ('PDE_M' not in mc.particle_model_name) & (
                 has_bounding_box == False):
 
             ax = fig.add_subplot(1, 5, 2)
-            embedding = get_embedding(model.a, 1)
+            embedding = get_embedding(model.a, 0)
             for n in range(n_particle_types):
                 plt.scatter(embedding[index_particles[n], 0],
                             embedding[index_particles[n], 1], color=cmap.color(n), s=0.1)
@@ -472,8 +470,8 @@ def data_train_particle(config, erase, best_model, device):
                                                                 type_list=to_numpy(x[:, 1 + 2 * dimension]),
                                                                 cmap=cmap, update_type='NA', device=device)
 
-            labels, n_clusters, new_labels = sparsify_cluster(train_config.cluster_method, proj_interaction, embedding,
-                                                              train_config.cluster_distance_threshold, type_list,
+            labels, n_clusters, new_labels = sparsify_cluster(tc.cluster_method, proj_interaction, embedding,
+                                                              tc.cluster_distance_threshold, type_list,
                                                               n_particle_types, embedding_cluster)
 
             accuracy = metrics.accuracy_score(to_numpy(type_list), new_labels)
@@ -491,7 +489,7 @@ def data_train_particle(config, erase, best_model, device):
                      transform=ax.transAxes, fontsize=10)
 
             ax = fig.add_subplot(1, 5, 5)
-            model_a_ = model.a[1].clone().detach()
+            model_a_ = model.a[0].clone().detach()
             for n in range(n_clusters):
                 pos = np.argwhere(labels == n).squeeze().astype(int)
                 pos = np.array(pos)
@@ -511,12 +509,12 @@ def data_train_particle(config, erase, best_model, device):
                     epoch < n_epochs - sparsity_freq):
                 # Constrain embedding domain
                 with torch.no_grad():
-                    model.a[1] = model_a_.clone().detach()
+                    model.a[0] = model_a_.clone().detach()
                 print(f'regul_embedding: replaced')
                 logger.info(f'regul_embedding: replaced')
 
                 # Constrain function domain
-                if train_config.sparsity == 'replace_embedding_function':
+                if tc.sparsity == 'replace_embedding_function':
 
                     logger.info(f'replace_embedding_function')
                     y_func_list = func_list * 0
@@ -543,17 +541,17 @@ def data_train_particle(config, erase, best_model, device):
                         pred = []
                         optimizer.zero_grad()
                         for n in range(n_particles):
-                            embedding_ = model.a[1, n, :].clone().detach() * torch.ones(
-                                (1000, model_config.embedding_dim), device=device)
-                            match model_config.particle_model_name:
+                            embedding_ = model.a[0, n, :].clone().detach() * torch.ones(
+                                (1000, mc.embedding_dim), device=device)
+                            match mc.particle_model_name:
                                 case 'PDE_ParticleField_A' | 'PDE_A':
                                     in_features = torch.cat(
-                                        (rr[:, None] / simulation_config.max_radius, 0 * rr[:, None],
-                                         rr[:, None] / simulation_config.max_radius, embedding_), dim=1)
+                                        (rr[:, None] / sim.max_radius, 0 * rr[:, None],
+                                         rr[:, None] / sim.max_radius, embedding_), dim=1)
                                 case 'PDE_ParticleField_B' | 'PDE_B':
                                     in_features = torch.cat(
-                                        (rr[:, None] / simulation_config.max_radius, 0 * rr[:, None],
-                                         rr[:, None] / simulation_config.max_radius, 0 * rr[:, None],
+                                        (rr[:, None] / sim.max_radius, 0 * rr[:, None],
+                                         rr[:, None] / sim.max_radius, 0 * rr[:, None],
                                          0 * rr[:, None],
                                          0 * rr[:, None], 0 * rr[:, None], embedding_), dim=1)
                                 case 'PDE_G':
@@ -574,22 +572,22 @@ def data_train_particle(config, erase, best_model, device):
                         loss.backward()
                         optimizer.step()
 
-                if train_config.fix_cluster_embedding:
+                if tc.fix_cluster_embedding:
                     lr_embedding = 1E-12
                 else:
-                    lr_embedding = train_config.learning_rate_embedding_start
+                    lr_embedding = tc.learning_rate_embedding_start
                 optimizer, n_total_params = set_trainable_parameters(model, lr_embedding, lr)
                 logger.info(f'Learning rates: {lr}, {lr_embedding}')
 
             else:
                 if epoch > n_epochs - sparsity_freq:
-                    lr_embedding = train_config.learning_rate_embedding_end
-                    lr = train_config.learning_rate_end
+                    lr_embedding = tc.learning_rate_embedding_end
+                    lr = tc.learning_rate_end
                     optimizer, n_total_params = set_trainable_parameters(model, lr_embedding, lr)
                     logger.info(f'Learning rates: {lr}, {lr_embedding}')
                 else:
-                    lr_embedding = train_config.learning_rate_embedding_start
-                    lr = train_config.learning_rate_start
+                    lr_embedding = tc.learning_rate_embedding_start
+                    lr = tc.learning_rate_start
                     optimizer, n_total_params = set_trainable_parameters(model, lr_embedding, lr)
                     logger.info(f'Learning rates: {lr}, {lr_embedding}')
 
@@ -599,7 +597,7 @@ def data_train_particle(config, erase, best_model, device):
 
 
 def data_test(config=None, config_file=None, visualize=False, style='color frame', verbose=True, best_model=20,
-              step=15, ratio=1, run=1, test_mode='', sample_embedding=False, particle_of_interest=1, device=[]):
+              step=15, ratio=1, run=0, test_mode='', sample_embedding=False, particle_of_interest=1, device=[]):
     """Route testing to the particle testing function.
 
     This simplified version only supports particle-based testing.
@@ -610,37 +608,36 @@ def data_test(config=None, config_file=None, visualize=False, style='color frame
 
 
 def data_test_particle(config=None, config_file=None, visualize=False, style='color frame', verbose=True,
-                       best_model=20, step=15, ratio=1, run=1, test_mode='', sample_embedding=False,
+                       best_model=20, step=15, ratio=1, run=0, test_mode='', sample_embedding=False,
                        particle_of_interest=1, device=[]):
 
     dataset_name = config.dataset
-    simulation_config = config.simulation
-    model_config = config.graph_model
-    training_config = config.training
+    sim = config.simulation
+    mc = config.graph_model
+    tc = config.training
 
-    has_ghost_particles = config.training.n_ghosts > 0
-    max_radius = simulation_config.max_radius
-    min_radius = simulation_config.min_radius
-    n_particle_types = simulation_config.n_particle_types
-    n_particles = simulation_config.n_particles
-    n_runs = training_config.n_runs
-    n_frames = simulation_config.n_frames
-    delta_t = simulation_config.delta_t
-    time_window = training_config.time_window
-    time_step = training_config.time_step
-    sub_sampling = simulation_config.sub_sampling
+    n_particles = sim.n_particles
+    n_frames = sim.n_frames
+    n_runs = tc.n_runs
+    max_radius = sim.max_radius
+    min_radius = sim.min_radius
+    n_particle_types = sim.n_particle_types
+    delta_t = sim.delta_t
+    time_window = tc.time_window
+    time_step = tc.time_step
+    sub_sampling = sim.sub_sampling
+    dimension = sim.dimension
+    omega = mc.omega
+    do_tracking = tc.do_tracking
     cmap = CustomColorMap(config=config)
-    dimension = simulation_config.dimension
-    field_type = model_config.field_type
-    has_field = (field_type != '')
-    omega = model_config.omega
 
-    do_tracking = training_config.do_tracking
-    has_state = (config.simulation.state_type != 'discrete')
-    has_bounding_box = 'PDE_F' in model_config.particle_model_name
+    has_ghost_particles = tc.n_ghosts > 0
+    has_field = (mc.field_type != '')
+    has_state = (sim.state_type != 'discrete')
+    has_bounding_box = 'PDE_F' in mc.particle_model_name
 
     if has_field:
-        n_nodes = simulation_config.n_nodes
+        n_nodes = sim.n_nodes
         n_nodes_per_axis = int(np.sqrt(n_nodes))
 
     log_dir = 'log/' + config.config_file
@@ -688,7 +685,7 @@ def data_test_particle(config=None, config_file=None, visualize=False, style='co
         x_list.append(x)
         y_list.append(y)
         x = x_list[0][0].clone().detach()
-        if ('PDE_MLPs' not in model_config.particle_model_name) & ('PDE_F' not in model_config.particle_model_name) & ('PDE_M' not in model_config.particle_model_name):
+        if ('PDE_MLPs' not in mc.particle_model_name) & ('PDE_F' not in mc.particle_model_name) & ('PDE_M' not in mc.particle_model_name):
             n_particles = int(x.shape[0] / ratio)
             config.simulation.n_particles = n_particles
         n_frames = len(x_list[0])
@@ -765,7 +762,7 @@ def data_test_particle(config=None, config_file=None, visualize=False, style='co
     model.load_state_dict(state_dict['model_state_dict'])
     model.eval()
 
-    if 'PDE_K' in model_config.particle_model_name:
+    if 'PDE_K' in mc.particle_model_name:
         model.connection_matrix = torch.load(f'graphs_data/{dataset_name}/connection_matrix_list.pt', map_location=device)
         timeit = np.load(f'graphs_data/{dataset_name}/times_train_springs_example.npy',
                          allow_pickle=True)
@@ -773,12 +770,12 @@ def data_test_particle(config=None, config_file=None, visualize=False, style='co
         time_id = 0
 
     if has_field:
-        n_nodes_per_axis = int(np.sqrt(simulation_config.n_nodes))
-        model_f = Siren_Network(image_width=n_nodes_per_axis, in_features=model_config.input_size_nnr,
-                                out_features=model_config.output_size_nnr,
-                                hidden_features=model_config.hidden_dim_nnr,
-                                hidden_layers=model_config.n_layers_nnr, outermost_linear=True, device=device,
-                                first_omega_0=model_config.omega, hidden_omega_0=model_config.omega)
+        n_nodes_per_axis = int(np.sqrt(sim.n_nodes))
+        model_f = Siren_Network(image_width=n_nodes_per_axis, in_features=mc.input_size_nnr,
+                                out_features=mc.output_size_nnr,
+                                hidden_features=mc.hidden_dim_nnr,
+                                hidden_layers=mc.n_layers_nnr, outermost_linear=True, device=device,
+                                first_omega_0=mc.omega, hidden_omega_0=mc.omega)
         net_f = f'{log_dir}/models/best_model_f_with_1_graphs_{best_model}.pt'
         state_dict = torch.load(net_f, map_location=device)
         model_f.load_state_dict(state_dict['model_state_dict'])
@@ -797,7 +794,7 @@ def data_test_particle(config=None, config_file=None, visualize=False, style='co
             print(f"Total Trainable Params: {total_params_f}")
 
     if verbose:
-        print(f'test data ... {model_config.particle_model_name}')
+        print(f'test data ... {mc.particle_model_name}')
         print('log_dir: {}'.format(log_dir))
         print(f'network: {net}')
         print(table)
@@ -826,7 +823,7 @@ def data_test_particle(config=None, config_file=None, visualize=False, style='co
     n_particles = x.shape[0]
     x_inference_list = []
 
-    for it in trange(start_it, start_it + 800):
+    for it in trange(start_it, stop_it, ncols=150):
 
         check_and_clear_memory(device=device, iteration_number=it, every_n_iterations=25,
                                memory_percentage_threshold=0.6)
@@ -834,7 +831,7 @@ def data_test_particle(config=None, config_file=None, visualize=False, style='co
         if it < n_frames - 4:
             x0 = x_list[0][it].clone().detach()
             x0_next = x_list[0][(it + time_step)].clone().detach()
-            if not (model_config.particle_model_name == 'PDE_R'):
+            if not (mc.particle_model_name == 'PDE_R'):
                 y0 = y_list[0][it].clone().detach()
 
         if do_tracking:
@@ -911,7 +908,7 @@ def data_test_particle(config=None, config_file=None, visualize=False, style='co
                 x_pos_next = x0_next[:, 1:dimension + 1].clone().detach()
                 if pred.shape[1] != dimension:
                     pred = torch.cat((pred, torch.zeros(pred.shape[0], 1, device=pred.device)), dim=1)
-                if model_config.prediction == '2nd_derivative':
+                if mc.prediction == '2nd_derivative':
                     x_pos_pred = (x[:, 1:dimension + 1] + delta_t * time_step * (
                                 x[:, dimension + 1:2 * dimension + 1] + delta_t * time_step * pred * ynorm))
                 else:
@@ -926,7 +923,7 @@ def data_test_particle(config=None, config_file=None, visualize=False, style='co
                     x[:, dimension + 1:2 * dimension + 1] = pred.clone().detach() / (delta_t * time_step)
 
             else:
-                if model_config.prediction == '2nd_derivative':
+                if mc.prediction == '2nd_derivative':
                     y = y * ynorm * delta_t
                     x[:n_particles, dimension + 1:2 * dimension + 1] = x[:n_particles, dimension + 1:2 * dimension + 1] + y[:n_particles]  # speed update
                 else:
@@ -956,29 +953,15 @@ def data_test_particle(config=None, config_file=None, visualize=False, style='co
                 rc('font', **{'family': 'serif', 'serif': ['Palatino']})
             if 'black' in style:
                 plt.style.use('dark_background')
-                mc = 'w'
+                marker_color = 'w'
             else:
                 plt.style.use('default')
-                mc = 'k'
+                marker_color = 'k'
 
             fig, ax = fig_init(formatx='%.1f', formaty='%.1f')
             ax.tick_params(axis='both', which='major', pad=15)
 
-            if 'PDE_K' in model_config.particle_model_name:
-
-                plt.close()
-                fig = plt.figure(figsize=(12, 12))
-                plt.scatter(x[:, 2].detach().cpu().numpy(),
-                            x[:, 1].detach().cpu().numpy(), s=20, color='r')
-                if it < n_frames - 1:
-                    x0_ = x_list[0][it + 1].clone().detach()
-                    plt.scatter(x0_[:, 2].detach().cpu().numpy(),
-                                x0_[:, 1].detach().cpu().numpy(), s=40, color='w', alpha=1, edgecolors='None')
-
-                plt.xlim([-3, 3])
-                plt.ylim([-3, 3])
-
-            elif do_tracking:
+            if do_tracking:
 
                 plt.scatter(to_numpy(x0[:, 2]), to_numpy(x0[:, 1]), s=10, c='w', alpha=0.5)
                 plt.scatter(to_numpy(x_pos_pred[:, 1]), to_numpy(x_pos_pred[:, 0]), s=10, c='r')
@@ -1030,16 +1013,16 @@ def data_test_particle(config=None, config_file=None, visualize=False, style='co
                     pos = pos[:, 0]
                     if 'zoom' in style:
                         plt.scatter(to_numpy(x[edge_index[0, pos], 2]), to_numpy(x[edge_index[0, pos], 1]), s=s_p * 10,
-                                    color=mc, alpha=1.0)
+                                    color=marker_color, alpha=1.0)
                     else:
                         plt.scatter(to_numpy(x[edge_index[0, pos], 2]), to_numpy(x[edge_index[0, pos], 1]), s=s_p * 1,
-                                    color=mc, alpha=1.0)
+                                    color=marker_color, alpha=1.0)
 
                     plt.arrow(x=to_numpy(x[particle_of_interest, 2]), y=to_numpy(x[particle_of_interest, 1]),
                               dx=to_numpy(x[particle_of_interest, 4]) * delta_t * 100,
                               dy=to_numpy(x[particle_of_interest, 3]) * delta_t * 100, head_width=0.004,
                               length_includes_head=True, color='b')
-                    if model_config.prediction == '2nd_derivative':
+                    if mc.prediction == '2nd_derivative':
                         plt.arrow(x=to_numpy(x[particle_of_interest, 2]), y=to_numpy(x[particle_of_interest, 1]),
                                   dx=to_numpy(y0[particle_of_interest, 1]) * delta_t ** 2 * 100,
                                   dy=to_numpy(y0[particle_of_interest, 0]) * delta_t ** 2 * 100, head_width=0.004,
@@ -1090,16 +1073,9 @@ def data_test_particle(config=None, config_file=None, visualize=False, style='co
             if 'no_ticks' in style:
                 plt.xticks([])
                 plt.yticks([])
-            if 'PDE_G' in model_config.particle_model_name:
+            if 'PDE_G' in mc.particle_model_name:
                 plt.xlim([-2, 2])
                 plt.ylim([-2, 2])
-            if 'PDE_GS' in model_config.particle_model_name:
-
-                object_list = ['sun', 'mercury', 'venus', 'earth', 'mars', 'jupiter', 'saturn', 'uranus', 'neptune',
-                               'pluto', 'io',
-                               'europa', 'ganymede', 'callisto', 'mimas', 'enceladus', 'tethys', 'dione', 'rhea',
-                               'titan', 'hyperion', 'moon',
-                               'phobos', 'deimos', 'charon']
 
                 masses = torch.tensor(
                     [1.989e30, 3.30e23, 4.87e24, 5.97e24, 6.42e23, 1.90e27, 5.68e26, 8.68e25, 1.02e26, 1.31e22,
@@ -1137,7 +1113,7 @@ def data_test_particle(config=None, config_file=None, visualize=False, style='co
                 plt.ylim([-1.2, 1.2])
                 plt.xticks([])
                 plt.yticks([])
-            if 'PDE_K' in model_config.particle_model_name:
+            if 'PDE_K' in mc.particle_model_name:
                 plt.xlim([-3, 3])
                 plt.ylim([-3, 3])
                 plt.xticks(fontsize=24)
@@ -1173,44 +1149,57 @@ def data_test_particle(config=None, config_file=None, visualize=False, style='co
                 plt.savefig(f"./{log_dir}/tmp_recons/Boundary_{config_file}_{num}.tif", dpi=80)
                 plt.close()
 
+    # Write structured results log
+    results = {
+        'rollout_RMSE_mean': float(np.mean(rmserr_list)) if rmserr_list else 0.0,
+        'rollout_RMSE_final': float(rmserr_list[-1]) if rmserr_list else 0.0,
+        'rollout_geomloss_mean': float(np.mean(geomloss_list)) if geomloss_list else 0.0,
+        'rollout_geomloss_final': float(geomloss_list[-1]) if geomloss_list else 0.0,
+    }
+    results_log_path = os.path.join(log_dir, 'results.log')
+    with open(results_log_path, 'w') as f:
+        for key, value in results.items():
+            f.write(f'{key}: {value}\n')
+    print(f'results written to {results_log_path}')
+
 
 def data_train_particle_field(config, erase, best_model, device):
-    simulation_config = config.simulation
-    train_config = config.training
-    model_config = config.graph_model
+    sim = config.simulation
+    tc = config.training
+    mc = config.graph_model
 
-    print(f'training particle field data ... {model_config.particle_model_name}')
+    print(f'training particle field data ... {mc.particle_model_name}')
 
-    dimension = simulation_config.dimension
-    n_epochs = train_config.n_epochs
-    max_radius = simulation_config.max_radius
-    min_radius = simulation_config.min_radius
-    n_particles = simulation_config.n_particles
-    n_particle_types = simulation_config.n_particle_types
-    n_nodes = simulation_config.n_nodes
+    dimension = sim.dimension
+    n_epochs = tc.n_epochs
+    max_radius = sim.max_radius
+    min_radius = sim.min_radius
+    n_particles = sim.n_particles
+    n_particle_types = sim.n_particle_types
+    n_nodes = sim.n_nodes
     n_nodes_per_axis = int(np.sqrt(n_nodes))
-    delta_t = simulation_config.delta_t
-    noise_level = train_config.noise_level
+    delta_t = sim.delta_t
+    noise_level = tc.noise_level
     dataset_name = config.dataset
-    n_frames = simulation_config.n_frames
-    has_siren = 'siren' in model_config.field_type
-    has_siren_time = 'siren_with_time' in model_config.field_type
-    rotation_augmentation = train_config.rotation_augmentation
-    data_augmentation_loop = train_config.data_augmentation_loop
-    target_batch_size = train_config.batch_size
-    replace_with_cluster = 'replace' in train_config.sparsity
-    has_ghost_particles = train_config.n_ghosts > 0
-    n_ghosts = train_config.n_ghosts
+    n_frames = sim.n_frames
+    has_siren = 'siren' in mc.field_type
+    has_siren_time = 'siren_with_time' in mc.field_type
+    rotation_augmentation = tc.rotation_augmentation
+    data_augmentation_loop = tc.data_augmentation_loop
+    target_batch_size = tc.batch_size
+    replace_with_cluster = 'replace' in tc.sparsity
+    has_ghost_particles = tc.n_ghosts > 0
+    n_ghosts = tc.n_ghosts
 
-    if train_config.small_init_batch_size:
+    if tc.small_init_batch_size:
         get_batch_size = increasing_batch_size(target_batch_size)
     else:
         get_batch_size = constant_batch_size(target_batch_size)
     batch_size = get_batch_size(0)
     cmap = CustomColorMap(config=config)
     embedding_cluster = EmbeddingCluster(config)
-    n_runs = train_config.n_runs
-    sparsity_freq = train_config.sparsity_freq
+    n_runs = tc.n_runs
+    sparsity_freq = tc.sparsity_freq
 
     log_dir, logger = create_log_dir(config, erase)
     print(f'Graph files N: {n_runs}')
@@ -1223,7 +1212,7 @@ def data_train_particle_field(config, erase, best_model, device):
     edge_f_p_list = []
 
     n_particles_max = 0
-    for run in trange(n_runs, ncols=80):
+    for run in trange(n_runs, ncols=100):
         x = np.load(f'graphs_data/{dataset_name}/x_list_{run}.npy')
         y = np.load(f'graphs_data/{dataset_name}/y_list_{run}.npy')
         if np.isnan(x).any() | np.isnan(y).any():
@@ -1243,7 +1232,7 @@ def data_train_particle_field(config, erase, best_model, device):
     x = torch.tensor(x_list[0][0], dtype=torch.float32, device=device)
     y = torch.tensor(y_list[0][0], dtype=torch.float32, device=device)
     time.sleep(0.5)
-    for run in trange(0, n_runs, max(n_runs // 10, 1), ncols=80):
+    for run in trange(0, n_runs, max(n_runs // 10, 1), ncols=100):
         for k in range(n_frames - 5):
             if (k % 10 == 0) | (n_frames < 1000):
                 try:
@@ -1305,8 +1294,8 @@ def data_train_particle_field(config, erase, best_model, device):
     model.ynorm = ynorm
     model.vnorm = vnorm
 
-    lr = train_config.learning_rate_start
-    lr_embedding = train_config.learning_rate_embedding_start
+    lr = tc.learning_rate_start
+    lr_embedding = tc.learning_rate_embedding_start
     optimizer, n_total_params = set_trainable_parameters(model, lr_embedding, lr)
     logger.info(f"total trainable Params: {n_total_params}")
     logger.info(f'learning rates: {lr}, {lr_embedding}')
@@ -1321,7 +1310,7 @@ def data_train_particle_field(config, erase, best_model, device):
     logger.info(f'initial batch_size: {batch_size}')
 
     # update variable if particle_dropout, cell_division, etc ...
-    x = torch.tensor(x_list[1][n_frames - 5], dtype=torch.float32, device=device)
+    x = torch.tensor(x_list[0][n_frames - 5], dtype=torch.float32, device=device)
     n_particles = x.shape[0]
     index_particles = get_index_particles(x, n_particle_types, dimension)
     type_list = get_type_list(x, dimension)
@@ -1331,10 +1320,10 @@ def data_train_particle_field(config, erase, best_model, device):
 
     if has_siren:
         image_width = int(np.sqrt(n_nodes))
-        model_f = Siren_Network(image_width=image_width, in_features=model_config.input_size_nnr,
-                                out_features=model_config.output_size_nnr,
-                                hidden_features=model_config.hidden_dim_nnr,
-                                hidden_layers=model_config.n_layers_nnr, outermost_linear=True, device=device,
+        model_f = Siren_Network(image_width=image_width, in_features=mc.input_size_nnr,
+                                out_features=mc.output_size_nnr,
+                                hidden_features=mc.hidden_dim_nnr,
+                                hidden_layers=mc.n_layers_nnr, outermost_linear=True, device=device,
                                 first_omega_0=80, hidden_omega_0=80.)
         model_f.to(device=device)
         model_f.train()
@@ -1398,7 +1387,7 @@ def data_train_particle_field(config, erase, best_model, device):
             cos_phi = torch.cos(phi)
             sin_phi = torch.sin(phi)
 
-            run = 1 + np.random.randint(n_runs - 1)
+            run = 0
 
             dataset_batch_p_p = []
             dataset_batch_f_p = []
@@ -1410,7 +1399,7 @@ def data_train_particle_field(config, erase, best_model, device):
                 x = torch.tensor(x_list[run][k], dtype=torch.float32, device=device)
                 x_mesh = x_mesh_list[run][k].clone().detach()
 
-                match model_config.field_type:
+                match mc.field_type:
                     case 'tensor':
                         x_mesh[:, 6:7] = model.field[run]
                     case 'siren':
@@ -1498,7 +1487,7 @@ def data_train_particle_field(config, erase, best_model, device):
             if visualize_embedding & (((epoch < 30) & (N % plot_frequency == 0)) | (N == 0)):
                 plot_training_particle_field(config=config, has_siren=has_siren, has_siren_time=has_siren_time,
                                              model_f=model_f, n_frames=n_frames,
-                                             model_name=model_config.particle_model_name, log_dir=log_dir,
+                                             model_name=mc.particle_model_name, log_dir=log_dir,
                                              epoch=epoch, N=N, x=x, x_mesh=x_mesh, model=model, n_nodes=0,
                                              n_node_types=0, index_nodes=0, dataset_num=1,
                                              index_particles=index_particles, n_particles=n_particles,
@@ -1545,7 +1534,7 @@ def data_train_particle_field(config, erase, best_model, device):
         plt.xlabel('Epochs', fontsize=12)
 
         ax = fig.add_subplot(1, 5, 2)
-        embedding = get_embedding(model.a, 1)
+        embedding = get_embedding(model.a, 0)
         for n in range(n_particle_types):
             plt.scatter(embedding[index_particles[n], 0],
                         embedding[index_particles[n], 1], color=cmap.color(n), s=0.1)
@@ -1564,8 +1553,8 @@ def data_train_particle_field(config, erase, best_model, device):
                                                             type_list=to_numpy(x[:, 1 + 2 * dimension]),
                                                             cmap=cmap, update_type='NA', device=device)
 
-        labels, n_clusters, new_labels = sparsify_cluster(train_config.cluster_method, proj_interaction, embedding,
-                                                          train_config.cluster_distance_threshold, type_list,
+        labels, n_clusters, new_labels = sparsify_cluster(tc.cluster_method, proj_interaction, embedding,
+                                                          tc.cluster_distance_threshold, type_list,
                                                           n_particle_types, embedding_cluster)
 
         accuracy = metrics.accuracy_score(to_numpy(type_list), new_labels)
@@ -1583,7 +1572,7 @@ def data_train_particle_field(config, erase, best_model, device):
                  transform=ax.transAxes, fontsize=10)
 
         ax = fig.add_subplot(1, 5, 5)
-        model_a_ = model.a[1].clone().detach()
+        model_a_ = model.a[0].clone().detach()
         for n in range(n_clusters):
             pos = np.argwhere(labels == n).squeeze().astype(int)
             pos = np.array(pos)
@@ -1601,11 +1590,11 @@ def data_train_particle_field(config, erase, best_model, device):
         if (replace_with_cluster) & (epoch % sparsity_freq == sparsity_freq - 1) & (epoch < n_epochs - sparsity_freq):
 
             with torch.no_grad():
-                model.a[1] = model_a_.clone().detach()
+                model.a[0] = model_a_.clone().detach()
             print(f'regul_embedding: replaced')
             logger.info(f'regul_embedding: replaced')
 
-            if train_config.sparsity == 'replace_embedding':
+            if tc.sparsity == 'replace_embedding':
 
                 logger.info(f'replace_embedding_function')
                 y_func_list = func_list * 0
@@ -1631,17 +1620,17 @@ def data_train_particle_field(config, erase, best_model, device):
                     pred = []
                     optimizer.zero_grad()
                     for n in range(n_particles):
-                        embedding_ = model.a[1, n, :].clone().detach() * torch.ones(
-                            (1000, model_config.embedding_dim), device=device)
-                        match model_config.particle_model_name:
+                        embedding_ = model.a[0, n, :].clone().detach() * torch.ones(
+                            (1000, mc.embedding_dim), device=device)
+                        match mc.particle_model_name:
                             case 'PDE_ParticleField_A':
                                 in_features = torch.cat(
-                                    (rr[:, None] / simulation_config.max_radius, 0 * rr[:, None],
-                                     rr[:, None] / simulation_config.max_radius, embedding_), dim=1)
+                                    (rr[:, None] / sim.max_radius, 0 * rr[:, None],
+                                     rr[:, None] / sim.max_radius, embedding_), dim=1)
                             case 'PDE_ParticleField_B':
                                 in_features = torch.cat(
-                                    (rr[:, None] / simulation_config.max_radius, 0 * rr[:, None],
-                                     rr[:, None] / simulation_config.max_radius, 0 * rr[:, None],
+                                    (rr[:, None] / sim.max_radius, 0 * rr[:, None],
+                                     rr[:, None] / sim.max_radius, 0 * rr[:, None],
                                      0 * rr[:, None],
                                      0 * rr[:, None], 0 * rr[:, None], embedding_), dim=1)
                         pred.append(model.lin_edge(in_features.float()))
@@ -1651,21 +1640,21 @@ def data_train_particle_field(config, erase, best_model, device):
                     loss.backward()
                     optimizer.step()
 
-            if train_config.fix_cluster_embedding:
+            if tc.fix_cluster_embedding:
                 lr_embedding = 1E-12
             else:
-                lr_embedding = train_config.learning_rate_embedding_start
+                lr_embedding = tc.learning_rate_embedding_start
             optimizer, n_total_params = set_trainable_parameters(model, lr_embedding, lr)
             logger.info(f'Learning rates: {lr}, {lr_embedding}')
 
         else:
             if epoch > n_epochs - sparsity_freq:
-                lr_embedding = train_config.learning_rate_embedding_end
-                lr = train_config.learning_rate_end
+                lr_embedding = tc.learning_rate_embedding_end
+                lr = tc.learning_rate_end
                 optimizer, n_total_params = set_trainable_parameters(model, lr_embedding, lr)
                 logger.info(f'Learning rates: {lr}, {lr_embedding}')
             else:
-                lr_embedding = train_config.learning_rate_embedding_start
-                lr = train_config.learning_rate_start
+                lr_embedding = tc.learning_rate_embedding_start
+                lr = tc.learning_rate_start
                 optimizer, n_total_params = set_trainable_parameters(model, lr_embedding, lr)
                 logger.info(f'Learning rates: {lr}, {lr_embedding}')

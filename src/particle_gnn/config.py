@@ -153,7 +153,7 @@ class PlottingConfig(BaseModel):
     pic_folder: str = "none"
     pic_format: str = "jpg"
     pic_size: list[int] = [1000, 1100]
-    data_embedding: int = 1
+    data_embedding: int = 0
 
 
 class TrainingConfig(BaseModel):

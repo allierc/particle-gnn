@@ -41,7 +41,7 @@ def data_generate(
     ratio=1,
     scenario="none",
     device=None,
-    bSave=True,
+    save=True,
     timer=False,
 ):
     dataset_name = config.dataset
@@ -69,7 +69,7 @@ def data_generate(
             ratio=ratio,
             scenario=scenario,
             device=device,
-            bSave=bSave,
+            save=save,
             timer=timer,
         )
     else:
@@ -84,7 +84,7 @@ def data_generate(
             ratio=ratio,
             scenario=scenario,
             device=device,
-            bSave=bSave,
+            save=save,
             timer=timer,
         )
 
@@ -102,25 +102,23 @@ def data_generate_particle(
     ratio=1,
     scenario="none",
     device=None,
-    bSave=True,
+    save=True,
     timer=False,
 ):
-    simulation_config = config.simulation
-    training_config = config.training
-    model_config = config.graph_model
+    sim = config.simulation
+    tc = config.training
+    mc = config.graph_model
 
-    print(
-        f"generating data ... {model_config.particle_model_name}"
-    )
+    print(f"generating data ... {mc.particle_model_name}")
 
-    dimension = simulation_config.dimension
-    max_radius = simulation_config.max_radius
-    min_radius = simulation_config.min_radius
-    n_particle_types = simulation_config.n_particle_types
-    n_particles = simulation_config.n_particles
-    delta_t = simulation_config.delta_t
-    n_frames = simulation_config.n_frames
-    has_particle_dropout = training_config.particle_dropout > 0
+    dimension = sim.dimension
+    max_radius = sim.max_radius
+    min_radius = sim.min_radius
+    n_particle_types = sim.n_particle_types
+    n_particles = sim.n_particles
+    delta_t = sim.delta_t
+    n_frames = sim.n_frames
+    has_particle_dropout = tc.particle_dropout > 0
     cmap = CustomColorMap(config=config)
     dataset_name = config.dataset
     connection_matrix_list = []
@@ -150,13 +148,13 @@ def data_generate_particle(
     particle_dropout_mask = np.arange(n_particles)
     if has_particle_dropout:
         draw = np.random.permutation(np.arange(n_particles))
-        cut = int(n_particles * (1 - training_config.particle_dropout))
+        cut = int(n_particles * (1 - tc.particle_dropout))
         particle_dropout_mask = draw[0:cut]
         inv_particle_dropout_mask = draw[cut:]
         x_removed_list = []
 
-    if simulation_config.angular_Bernouilli != [-1]:
-        b = simulation_config.angular_Bernouilli
+    if sim.angular_Bernouilli != [-1]:
+        b = sim.angular_Bernouilli
         generative_m = np.array([stats.norm(b[0], b[2]), stats.norm(b[1], b[2])])
 
     for run in range(config.training.n_runs):
@@ -167,7 +165,7 @@ def data_generate_particle(
             memory_percentage_threshold=0.6,
         )
 
-        if "PDE_K" in model_config.particle_model_name:
+        if "PDE_K" in mc.particle_model_name:
             p = config.simulation.params
             edges = np.random.choice(p[0], size=(n_particles, n_particles), p=p[1])
             edges = np.tril(edges) + np.tril(edges, -1).T
@@ -176,7 +174,7 @@ def data_generate_particle(
             model.connection_matrix = connection_matrix.detach().clone()
             connection_matrix_list.append(connection_matrix)
 
-        n_particles = simulation_config.n_particles
+        n_particles = sim.n_particles
 
         x_list = []
         y_list = []
@@ -189,9 +187,9 @@ def data_generate_particle(
         edge_cache = NeighborCache()
 
         time.sleep(0.5)
-        for it in trange(simulation_config.start_frame, n_frames + 1, ncols=150):
+        for it in trange(sim.start_frame, n_frames + 1, ncols=100):
             # calculate type change
-            if simulation_config.state_type == "sequence":
+            if sim.state_type == "sequence":
                 sample = torch.rand((len(T1), 1), device=device)
                 sample = (
                     sample < (1 / config.simulation.state_params[0])
@@ -247,10 +245,10 @@ def data_generate_particle(
                 # model prediction
                 y = model(dataset)
 
-            if simulation_config.angular_sigma > 0:
+            if sim.angular_sigma > 0:
                 phi = (
                     torch.randn(n_particles, device=device)
-                    * simulation_config.angular_sigma
+                    * sim.angular_sigma
                     / 360
                     * np.pi
                     * 2
@@ -260,7 +258,7 @@ def data_generate_particle(
                 new_vx = cos_phi * y[:, 0] - sin_phi * y[:, 1]
                 new_vy = sin_phi * y[:, 0] + cos_phi * y[:, 1]
                 y = torch.cat((new_vx[:, None], new_vy[:, None]), 1).clone().detach()
-            if simulation_config.angular_Bernouilli != [-1]:
+            if sim.angular_Bernouilli != [-1]:
                 z_i = stats.bernoulli(b[3]).rvs(n_particles)
                 phi = np.array([g.rvs() for g in generative_m[z_i]]) / 360 * np.pi * 2
                 phi = torch.tensor(phi, device=device, dtype=torch.float32)
@@ -271,7 +269,7 @@ def data_generate_particle(
                 y = torch.cat((new_vx[:, None], new_vy[:, None]), 1).clone().detach()
 
             # append list
-            if (it >= 0) & bSave:
+            if (it >= 0) & save:
                 if has_particle_dropout:
                     x_ = x[particle_dropout_mask].clone().detach()
                     x_[:, 0] = torch.arange(len(x_), device=device)
@@ -285,7 +283,7 @@ def data_generate_particle(
                     y_list.append(y.clone().detach())
 
             # Particle update
-            if model_config.prediction == "2nd_derivative":
+            if mc.prediction == "2nd_derivative":
                 V1 += y * delta_t
             else:
                 V1 = y
@@ -311,7 +309,7 @@ def data_generate_particle(
                             s=s_p,
                             color="k",
                         )
-                    if training_config.particle_dropout > 0:
+                    if tc.particle_dropout > 0:
                         plt.scatter(
                             x[inv_particle_dropout_mask, 1].detach().cpu().numpy(),
                             x[inv_particle_dropout_mask, 2].detach().cpu().numpy(),
@@ -327,7 +325,7 @@ def data_generate_particle(
                         )
                     plt.xlim([0, 1])
                     plt.ylim([0, 1])
-                    if "PDE_G" in model_config.particle_model_name:
+                    if "PDE_G" in mc.particle_model_name:
                         plt.xlim([-2, 2])
                         plt.ylim([-2, 2])
                     if "latex" in style:
@@ -350,7 +348,7 @@ def data_generate_particle(
                     plt.close()
 
                 if "color" in style:
-                    if model_config.particle_model_name == "PDE_O":
+                    if mc.particle_model_name == "PDE_O":
                         fig = plt.figure(figsize=(12, 12))
                         plt.scatter(
                             H1[:, 0].detach().cpu().numpy(),
@@ -391,7 +389,7 @@ def data_generate_particle(
                         )
                         plt.close()
 
-                    elif (model_config.particle_model_name == "PDE_A") & (dimension == 3):
+                    elif (mc.particle_model_name == "PDE_A") & (dimension == 3):
                         fig = plt.figure(figsize=(20, 10))
 
                         # Left panel: 3D view
@@ -455,7 +453,7 @@ def data_generate_particle(
                                 s=s_p,
                                 color=cmap.color(n),
                             )
-                        if training_config.particle_dropout > 0:
+                        if tc.particle_dropout > 0:
                             plt.scatter(
                                 x[inv_particle_dropout_mask, 2].detach().cpu().numpy(),
                                 x[inv_particle_dropout_mask, 1].detach().cpu().numpy(),
@@ -472,7 +470,7 @@ def data_generate_particle(
 
                         plt.xlim([0, 1])
                         plt.ylim([0, 1])
-                        if "PDE_G" in model_config.particle_model_name:
+                        if "PDE_G" in mc.particle_model_name:
                             plt.xlim([-2, 2])
                             plt.ylim([-2, 2])
                         if "latex" in style:
@@ -507,7 +505,7 @@ def data_generate_particle(
                         )
                         plt.close()
 
-        if bSave:
+        if save:
             x_list = np.array(to_numpy(torch.stack(x_list)))
             y_list = np.array(to_numpy(torch.stack(y_list)))
             np.save(f"graphs_data/{dataset_name}/x_list_{run}.npy", x_list)
@@ -528,7 +526,7 @@ def data_generate_particle(
 
             torch.save(model.p, f"graphs_data/{dataset_name}/model_p.pt")
 
-    if "PDE_K" in model_config.particle_model_name:
+    if "PDE_K" in mc.particle_model_name:
         torch.save(
             connection_matrix_list,
             f"graphs_data/{dataset_name}/connection_matrix_list.pt",
@@ -546,32 +544,32 @@ def data_generate_particle_field(
     ratio=1,
     scenario="none",
     device=None,
-    bSave=True,
+    save=True,
     timer=False
 ):
 
-    simulation_config = config.simulation
-    training_config = config.training
-    model_config = config.graph_model
+    sim = config.simulation
+    tc = config.training
+    mc = config.graph_model
 
     print(
-        f"generating data ... {model_config.particle_model_name}"
+        f"generating data ... {mc.particle_model_name}"
     )
 
-    dimension = simulation_config.dimension
-    max_radius = simulation_config.max_radius
-    min_radius = simulation_config.min_radius
-    n_particle_types = simulation_config.n_particle_types
-    n_particles = simulation_config.n_particles
-    n_nodes = simulation_config.n_nodes
+    dimension = sim.dimension
+    max_radius = sim.max_radius
+    min_radius = sim.min_radius
+    n_particle_types = sim.n_particle_types
+    n_particles = sim.n_particles
+    n_nodes = sim.n_nodes
     n_nodes_per_axis = int(np.sqrt(n_nodes))
-    delta_t = simulation_config.delta_t
-    n_frames = simulation_config.n_frames
-    has_particle_dropout = training_config.particle_dropout > 0
+    delta_t = sim.delta_t
+    n_frames = sim.n_frames
+    has_particle_dropout = tc.particle_dropout > 0
     cmap = CustomColorMap(config=config)
     dataset_name = config.dataset
-    bounce = simulation_config.bounce
-    bounce_coeff = simulation_config.bounce_coeff
+    bounce = sim.bounce
+    bounce_coeff = sim.bounce_coeff
 
     # Create log directory
     log_dir = f"./graphs_data/{dataset_name}/"
@@ -600,7 +598,7 @@ def data_generate_particle_field(
     X1_mesh, V1_mesh, T1_mesh, H1_mesh, A1_mesh, N1_mesh, mesh_data = init_mesh(config, device=device)
     mask_mesh = mesh_data["mask"].squeeze()
 
-    if hasattr(simulation_config, 'boundary') and simulation_config.boundary == 'periodic':
+    if hasattr(sim, 'boundary') and sim.boundary == 'periodic':
         mask_mesh = torch.ones_like(mask_mesh, dtype=torch.bool)
 
     model_p_p, bc_pos, bc_dpos = choose_model(config=config, device=device)
@@ -616,7 +614,7 @@ def data_generate_particle_field(
         )
     if has_particle_dropout:
         draw = np.random.permutation(np.arange(n_particles))
-        cut = int(n_particles * (1 - training_config.particle_dropout))
+        cut = int(n_particles * (1 - tc.particle_dropout))
         particle_dropout_mask = draw[0:cut]
         inv_particle_dropout_mask = draw[cut:]
         x_removed_list = []
@@ -624,7 +622,7 @@ def data_generate_particle_field(
         particle_dropout_mask = np.arange(n_particles)
 
     for run in range(config.training.n_runs):
-        n_particles = simulation_config.n_particles
+        n_particles = sim.n_particles
 
         x_list = []
         y_list = []
@@ -636,7 +634,7 @@ def data_generate_particle_field(
 
         X1, V1, T1, H1, _, N1 = init_particles(config=config, scenario=scenario, ratio=ratio, device=device)
 
-        if simulation_config.shuffle_particle_types:
+        if sim.shuffle_particle_types:
             if run == 0:
                 print('shuffle types...')
                 shuffle_index = torch.randperm(n_particles, device=device)
@@ -660,10 +658,10 @@ def data_generate_particle_field(
         )
         time.sleep(1)
 
-        for it in range(simulation_config.start_frame, n_frames + 1):
-            if ("siren" in model_config.field_type) & (it >= 0):
+        for it in range(sim.start_frame, n_frames + 1):
+            if ("siren" in mc.field_type) & (it >= 0):
                 im = imread(
-                    f"graphs_data/{simulation_config.node_value_map}"
+                    f"graphs_data/{sim.node_value_map}"
                 )
                 im = im[it].squeeze()
                 im = np.rot90(im, 3)
@@ -683,7 +681,7 @@ def data_generate_particle_field(
                 1,
             )
 
-            if it == simulation_config.start_frame:
+            if it == sim.start_frame:
                 index_particles = get_index_particles(x, n_particle_types, dimension)
 
             x_mesh = torch.concatenate(
@@ -746,7 +744,7 @@ def data_generate_particle_field(
                 y = y0 + y1
 
             # append list
-            if (it >= 0) & bSave:
+            if (it >= 0) & save:
                 if has_particle_dropout:
                     x_ = x[inv_particle_dropout_mask].clone().detach()
                     x_[:, 0] = torch.arange(len(x_), device=device)
@@ -799,7 +797,7 @@ def data_generate_particle_field(
 
             # Particle update
             with torch.no_grad():
-                if model_config.prediction == "2nd_derivative":
+                if mc.prediction == "2nd_derivative":
                     V1 += y * delta_t
                 else:
                     V1 = y
@@ -852,7 +850,7 @@ def data_generate_particle_field(
                 )
                 plt.close()
 
-        if bSave:
+        if save:
             x_list_ = np.array(to_numpy(torch.stack(x_list)))
             y_list_ = np.array(to_numpy(torch.stack(y_list)))
             np.save(f"graphs_data/{dataset_name}/x_list_{run}.npy", x_list_)

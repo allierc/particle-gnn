@@ -1,0 +1,35 @@
+{
+  "date": "2026-02-20",
+  "commit": "placeholder",
+  "configs": {
+    "arbitrary": {
+      "metrics": {},
+      "thresholds": {
+        "rollout_RMSE_mean": 0.01,
+        "rollout_RMSE_final": 0.05,
+        "rollout_geomloss_mean": 0.005,
+        "rollout_geomloss_final": 0.01,
+        "training_accuracy": 0.05
+      }
+    },
+    "boids": {
+      "metrics": {},
+      "thresholds": {
+        "rollout_RMSE_mean": 0.01,
+        "rollout_RMSE_final": 0.05,
+        "rollout_geomloss_mean": 0.005,
+        "rollout_geomloss_final": 0.01
+      }
+    },
+    "gravity": {
+      "metrics": {},
+      "thresholds": {
+        "rollout_RMSE_mean": 0.01,
+        "rollout_RMSE_final": 0.05,
+        "rollout_geomloss_mean": 0.005,
+        "rollout_geomloss_final": 0.01,
+        "training_accuracy": 0.05
+      }
+    }
+  }
+}

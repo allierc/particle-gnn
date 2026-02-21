@@ -207,7 +207,7 @@ def analyze_edge_function(rr=[], vizualize=False, config=None, model_MLP=[], mod
     for n in range(n_particles):
 
         if len(model.a.shape) == 3:
-            model_a = model.a[1, n, :]
+            model_a = model.a[0, n, :]
         else:
             model_a = model.a[n, :]
 
@@ -316,7 +316,7 @@ def plot_training(config, pred, gt, log_dir, epoch, N, x, index_particles, n_par
             for n in range(n_particle_types):
                 plt.scatter(embedding[index_particles[n], 0], embedding[index_particles[n], 1], color=cmap.color(n), s=1)
         elif simulation_config.state_type == 'sequence':
-            embedding = to_numpy(model.a[1].squeeze())
+            embedding = to_numpy(model.a[0].squeeze())
             plt.scatter(embedding[:-200, 0], embedding[:-200, 1], color='k', s=0.1)
         else:
             embedding = get_embedding(model.a, plot_config.data_embedding)
@@ -375,7 +375,7 @@ def plot_training(config, pred, gt, log_dir, epoch, N, x, index_particles, n_par
                     if do_tracking:
                         embedding_ = model.a[n, :] * torch.ones((1000, model_config.embedding_dim), device=device)
                     else:
-                        embedding_ = model.a[1, n, :] * torch.ones((1000, model_config.embedding_dim), device=device)
+                        embedding_ = model.a[0, n, :] * torch.ones((1000, model_config.embedding_dim), device=device)
 
                     in_features = get_in_features(rr=rr, embedding=embedding_, model=model, model_name=config.graph_model.particle_model_name,
                                                 max_radius=simulation_config.max_radius)
@@ -403,7 +403,7 @@ def plot_training(config, pred, gt, log_dir, epoch, N, x, index_particles, n_par
                     if do_tracking:
                         embedding_ = model.a[n, :] * torch.ones((1000, model_config.embedding_dim), device=device)
                     else:
-                        embedding_ = model.a[1, n, :] * torch.ones((1000, model_config.embedding_dim), device=device)
+                        embedding_ = model.a[0, n, :] * torch.ones((1000, model_config.embedding_dim), device=device)
                     in_features = get_in_features(rr, embedding_, config.graph_model.particle_model_name, max_radius)
                     with torch.no_grad():
                         func = model.lin_edge(in_features.float())
