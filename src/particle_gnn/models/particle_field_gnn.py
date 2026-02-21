@@ -9,8 +9,8 @@ from particle_gnn.graph_utils import remove_self_loops, scatter_aggregate
 from particle_gnn.models.registry import register_model
 
 
-@register_model("PDE_ParticleField_A", "PDE_ParticleField_B")
-class Interaction_Particle_Field(nn.Module):
+@register_model("arbitrary_field_ode", "boids_field_ode")
+class ParticleFieldGNN(nn.Module):
     """Interaction Network as proposed in this paper:
     https://proceedings.neurips.cc/paper/2016/hash/3147da8ab4a0437c15ef51a5cc7f2dc4-Abstract.html"""
 
@@ -142,9 +142,9 @@ class Interaction_Particle_Field(nn.Module):
 
         match self.model:
 
-            case 'PDE_ParticleField_A':
+            case 'arbitrary_field_ode':
                     in_features = torch.cat((delta_pos, r[:, None], embedding_i), dim=-1)
-            case 'PDE_ParticleField_B':
+            case 'boids_field_ode':
                     in_features = torch.cat(
                         (delta_pos, r[:, None], dpos_x_i[:, None], dpos_y_i[:, None], dpos_x_j[:, None],
                          dpos_y_j[:, None], embedding_i), dim=-1)
@@ -155,12 +155,9 @@ class Interaction_Particle_Field(nn.Module):
 
     def psi(self, r, p1, p2):
 
-        if (self.model == 'PDE_A') | (self.model =='PDE_A_bis')  | (self.model=='PDE_ParticleField_A'):
+        if self.model == 'arbitrary_field_ode':
             return r * (p1[0] * torch.exp(-r ** (2 * p1[1]) / (2 * self.sigma ** 2)) - p1[2] * torch.exp(-r ** (2 * p1[3]) / (2 * self.sigma ** 2)))
-        if self.model == 'PDE_B':
+        if self.model == 'boids_field_ode':
             cohesion = p1[0] * 0.5E-5 * r
             separation = -p1[2] * 1E-8 / r
             return (cohesion + separation) * p1[1] / 500
-        if self.model == 'PDE_G':
-            psi = p1 / r ** 2
-            return psi[:, None]

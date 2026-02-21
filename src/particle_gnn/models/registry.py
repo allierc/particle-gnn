@@ -1,20 +1,20 @@
 """Model registry for particle-gnn.
 
 Two registries:
-  - Simulator registry: maps config names to physics simulator classes (PDE_A, PDE_B, PDE_G)
-  - Model registry: maps config names to learnable GNN classes (Interaction_Particle, Interaction_Particle_Field)
+  - Simulator registry: maps config names to physics simulator classes (ArbitraryODE, BoidsODE, GravityODE)
+  - Model registry: maps config names to learnable GNN classes (ParticleGNN, ParticleFieldGNN)
 
 Usage:
-    @register_simulator("PDE_A", "PDE_ParticleField_A")
-    class PDE_A(nn.Module):
+    @register_simulator("arbitrary_ode", "arbitrary_field_ode")
+    class ArbitraryODE(nn.Module):
         ...
 
-    @register_model("PDE_A", "PDE_B", "PDE_G")
-    class Interaction_Particle(nn.Module):
+    @register_model("arbitrary_ode", "boids_ode", "gravity_ode")
+    class ParticleGNN(nn.Module):
         ...
 
-    sim_cls = get_simulator_class("PDE_A")
-    model_cls = get_model_class("PDE_A")
+    sim_cls = get_simulator_class("arbitrary_ode")
+    model_cls = get_model_class("arbitrary_ode")
 """
 
 _SIMULATOR_REGISTRY: dict[str, type] = {}
@@ -28,9 +28,9 @@ def _discover_simulators():
     if _simulators_discovered:
         return
     _simulators_discovered = True
-    import particle_gnn.generators.PDE_A  # noqa: F401
-    import particle_gnn.generators.PDE_B  # noqa: F401
-    import particle_gnn.generators.PDE_G  # noqa: F401
+    import particle_gnn.generators.arbitrary_ode  # noqa: F401
+    import particle_gnn.generators.boids_ode  # noqa: F401
+    import particle_gnn.generators.gravity_ode  # noqa: F401
 
 
 def _discover_models():
@@ -38,8 +38,8 @@ def _discover_models():
     if _models_discovered:
         return
     _models_discovered = True
-    import particle_gnn.models.Interaction_Particle  # noqa: F401
-    import particle_gnn.models.Interaction_Particle_Field  # noqa: F401
+    import particle_gnn.models.particle_gnn  # noqa: F401
+    import particle_gnn.models.particle_field_gnn  # noqa: F401
 
 
 def register_simulator(*names: str):

@@ -55,7 +55,7 @@ def data_generate(
         print("watch out: data already generated")
         # return
 
-    has_particle_field = "PDE_ParticleField" in config.graph_model.particle_model_name
+    has_particle_field = "field_ode" in config.graph_model.particle_model_name
 
     if has_particle_field:
         data_generate_particle_field(
@@ -312,7 +312,7 @@ def data_generate_particle(
                     )
                 plt.xlim([0, 1])
                 plt.ylim([0, 1])
-                if "PDE_G" in mc.particle_model_name:
+                if "gravity_ode" in mc.particle_model_name:
                     plt.xlim([-2, 2])
                     plt.ylim([-2, 2])
                 if "latex" in style:
@@ -366,7 +366,7 @@ def data_generate_particle(
                     plt.tight_layout()
                     active_style.savefig(fig, f"graphs_data/{dataset_name}/Fig/Rot_{run}_Fig{it}.jpg")
 
-                elif (mc.particle_model_name == "PDE_A") & (dimension == 3):
+                elif (mc.particle_model_name == "arbitrary_ode") & (dimension == 3):
                     fig, _ = active_style.figure(width=20, height=10)
 
                     # Left panel: 3D view
@@ -443,7 +443,7 @@ def data_generate_particle(
 
                     plt.xlim([0, 1])
                     plt.ylim([0, 1])
-                    if "PDE_G" in mc.particle_model_name:
+                    if "gravity_ode" in mc.particle_model_name:
                         plt.xlim([-2, 2])
                         plt.ylim([-2, 2])
                     if "latex" in style:

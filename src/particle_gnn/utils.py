@@ -283,11 +283,11 @@ def add_pre_folder(config_file_):
 
 def get_log_dir(config=[]):
 
-    if 'PDE_A' in config.graph_model.particle_model_name:
+    if 'arbitrary_ode' in config.graph_model.particle_model_name:
         l_dir = os.path.join('./log/arbitrary/')
-    elif 'PDE_B' in config.graph_model.particle_model_name:
+    elif 'boids_ode' in config.graph_model.particle_model_name:
         l_dir = os.path.join('./log/boids/')
-    elif 'PDE_G' in config.graph_model.particle_model_name:
+    elif 'gravity_ode' in config.graph_model.particle_model_name:
         l_dir = os.path.join('./log/gravity/')
     else:
         raise ValueError(f'unknown particle model name: {config.graph_model.particle_model_name}')

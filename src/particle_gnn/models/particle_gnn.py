@@ -8,8 +8,8 @@ from particle_gnn.graph_utils import remove_self_loops, scatter_aggregate
 from particle_gnn.models.registry import register_model
 
 
-@register_model("PDE_A", "PDE_B", "PDE_G")
-class Interaction_Particle(nn.Module):
+@register_model("arbitrary_ode", "boids_ode", "gravity_ode")
+class ParticleGNN(nn.Module):
     """Interaction Network as proposed in this paper:
     https://proceedings.neurips.cc/paper/2016/hash/3147da8ab4a0437c15ef51a5cc7f2dc4-Abstract.html"""
 
@@ -174,13 +174,11 @@ class Interaction_Particle(nn.Module):
             delta_pos[:, :2] = delta_pos[:, :2] @ self.rotation_matrix
 
         match self.model:
-            case 'PDE_A':
+            case 'arbitrary_ode':
                 in_features = torch.cat((delta_pos, r[:, None], embedding_i), dim=-1)
-            case 'PDE_A_bis':
-                in_features = torch.cat((delta_pos, r[:, None], embedding_i, embedding_j), dim=-1)
-            case 'PDE_B':
+            case 'boids_ode':
                 in_features = torch.cat((delta_pos, r[:, None], d_pos_i, d_pos_j, embedding_i), dim=-1)
-            case 'PDE_G':
+            case 'gravity_ode':
                 in_features = torch.cat((delta_pos, r[:, None], d_pos_i, d_pos_j, embedding_j), dim=-1)
 
         out = self.lin_edge(in_features)
@@ -196,12 +194,12 @@ class Interaction_Particle(nn.Module):
 
     def psi(self, r, p1, p2=None):
 
-        if (self.model == 'PDE_A') | (self.model == 'PDE_A_bis'):
+        if self.model == 'arbitrary_ode':
             return r * (p1[0] * torch.exp(-torch.abs(r) ** (2 * p1[1]) / (2 * self.sigma ** 2)) - p1[2] * torch.exp(-torch.abs(r) ** (2 * p1[3]) / (2 * self.sigma ** 2)))
-        if self.model == 'PDE_B':
+        if self.model == 'boids_ode':
             cohesion = p1[0] * 0.5E-5 * r
             separation = -p1[2] * 1E-8 / r
             return (cohesion + separation) * p1[1] / 500
-        if self.model == 'PDE_G':
+        if self.model == 'gravity_ode':
             psi = p1 / r ** 2
             return psi[:, None]

@@ -30,7 +30,7 @@ def build_edge_features(rr, embedding, model_name, max_radius):
     Args:
         rr: (n_pts,) tensor of radial distances
         embedding: (N, embed_dim) or (n_pts, embed_dim) tensor
-        model_name: one of PDE_A, PDE_B, PDE_G, PDE_ParticleField_A, PDE_ParticleField_B
+        model_name: one of arbitrary_ode, boids_ode, gravity_ode, arbitrary_field_ode, boids_field_ode
         max_radius: float
 
     Returns:
@@ -45,14 +45,14 @@ def build_edge_features(rr, embedding, model_name, max_radius):
         z = torch.zeros_like(rr_exp)
 
         match model_name:
-            case 'PDE_A' | 'PDE_ParticleField_A':
+            case 'arbitrary_ode' | 'arbitrary_field_ode':
                 return torch.cat((
                     rr_exp.unsqueeze(-1) / max_radius,
                     z.unsqueeze(-1),
                     rr_exp.unsqueeze(-1) / max_radius,
                     emb_exp,
                 ), dim=-1)
-            case 'PDE_B' | 'PDE_ParticleField_B':
+            case 'boids_ode' | 'boids_field_ode':
                 return torch.cat((
                     rr_exp.unsqueeze(-1) / max_radius,
                     z.unsqueeze(-1),
@@ -63,7 +63,7 @@ def build_edge_features(rr, embedding, model_name, max_radius):
                     z.unsqueeze(-1),
                     emb_exp,
                 ), dim=-1)
-            case 'PDE_G':
+            case 'gravity_ode':
                 return torch.cat((
                     rr_exp.unsqueeze(-1) / max_radius,
                     z.unsqueeze(-1),
@@ -79,14 +79,14 @@ def build_edge_features(rr, embedding, model_name, max_radius):
     else:
         # Original non-batched path (embedding is (n_pts, embed_dim))
         match model_name:
-            case 'PDE_A' | 'PDE_ParticleField_A':
+            case 'arbitrary_ode' | 'arbitrary_field_ode':
                 return torch.cat((rr[:, None] / max_radius, 0 * rr[:, None],
                                   rr[:, None] / max_radius, embedding), dim=1)
-            case 'PDE_B' | 'PDE_ParticleField_B':
+            case 'boids_ode' | 'boids_field_ode':
                 return torch.cat((rr[:, None] / max_radius, 0 * rr[:, None],
                                   torch.abs(rr[:, None]) / max_radius, 0 * rr[:, None], 0 * rr[:, None],
                                   0 * rr[:, None], 0 * rr[:, None], embedding), dim=1)
-            case 'PDE_G':
+            case 'gravity_ode':
                 return torch.cat((rr[:, None] / max_radius, 0 * rr[:, None],
                                   rr[:, None] / max_radius, 0 * rr[:, None],
                                   0 * rr[:, None],
@@ -227,7 +227,7 @@ def analyze_edge_function(rr=[], vizualize=False, config=None, model_MLP=[], mod
     config_model = config.graph_model.particle_model_name
 
     if rr == []:
-        if config_model == 'PDE_G':
+        if config_model == 'gravity_ode':
             rr = torch.tensor(np.linspace(0, max_radius * 1.3, 1000)).to(device)
         else:
             rr = torch.tensor(np.linspace(0, max_radius, 1000)).to(device)
@@ -268,7 +268,7 @@ def analyze_edge_function(rr=[], vizualize=False, config=None, model_MLP=[], mod
             subsample=subsample, alpha=0.25, linewidth=1,
         )
 
-        if config.graph_model.particle_model_name == 'PDE_G':
+        if config.graph_model.particle_model_name == 'gravity_ode':
             plt.xlim([1E-3, 0.02])
         plt.ylim(config.plotting.ylim)
 
@@ -428,7 +428,7 @@ def plot_training(config, pred, gt, log_dir, epoch, N, x, index_particles, n_par
     else:
         match model_config.particle_model_name:
 
-            case 'PDE_A' | 'PDE_ParticleField_A' | 'PDE_G':
+            case 'arbitrary_ode' | 'arbitrary_field_ode' | 'gravity_ode':
                 fig, ax = style.figure(height=12)
                 if axis:
                     ax.xaxis.set_major_locator(plt.MaxNLocator(3))
@@ -459,12 +459,12 @@ def plot_training(config, pred, gt, log_dir, epoch, N, x, index_particles, n_par
                 _plot_curves_fast(ax, rr_np, to_numpy(func_list), type_arr, cmap,
                                   ynorm=ynorm_np, subsample=subsample, alpha=0.25, linewidth=2)
 
-                if model_config.particle_model_name == 'PDE_G':
+                if model_config.particle_model_name == 'gravity_ode':
                     plt.xlim([0, 0.02])
                 plt.tight_layout()
                 style.savefig(fig, f"./{log_dir}/tmp_training/function/MLP1/function_{epoch}_{N}.tif")
 
-            case 'PDE_B' | 'PDE_ParticleField_B':
+            case 'boids_ode' | 'boids_field_ode':
                 max_radius_plot = 0.04
                 fig, ax = style.figure(height=12)
                 rr = torch.tensor(np.linspace(-max_radius_plot, max_radius_plot, 1000)).to(device)
@@ -552,9 +552,9 @@ def plot_training_particle_field(config, has_siren, has_siren_time, model_f, n_f
         plt.tight_layout()
 
     match model_config.particle_model_name:
-        case 'PDE_ParticleField_A':
+        case 'arbitrary_field_ode':
             rr = torch.tensor(np.linspace(0, simulation_config.max_radius, 200)).to(device)
-        case 'PDE_ParticleField_B':
+        case 'boids_field_ode':
             rr = torch.tensor(np.linspace(-max_radius, max_radius, 200)).to(device)
 
     # Vectorized: all neurons at once
@@ -626,3 +626,175 @@ def batched_sparsity_mlp_eval(model, rr, n_particles, config, device):
     pred = pred_flat.reshape(N, n_pts, output_dim)
 
     return pred
+
+
+# --------------------------------------------------------------------------- #
+#  True interaction function overlay
+# --------------------------------------------------------------------------- #
+
+def _plot_true_psi(ax, rr, config, n_particle_types, cmap, device):
+    """Plot true psi interaction curves for each particle type.
+
+    Loads the ground-truth simulator via ``choose_model`` and evaluates
+    ``psi(rr, p[n])`` for each type, drawing thick solid lines.
+
+    Args:
+        ax: matplotlib Axes to draw on.
+        rr: (n_pts,) tensor of radial sample points.
+        config: ParticleGNNConfig.
+        n_particle_types: int.
+        cmap: CustomColorMap instance.
+        device: torch device.
+    """
+    from particle_gnn.generators.utils import choose_model
+
+    true_model, _, _ = choose_model(config, device=device)
+    config_model = config.graph_model.particle_model_name
+    p = true_model.p
+
+    rr_np = to_numpy(rr)
+
+    for n in range(n_particle_types):
+        with torch.no_grad():
+            if 'arbitrary_ode' in config_model:
+                func_type = 'arbitrary'
+                if hasattr(config.simulation, 'func_params') and config.simulation.func_params:
+                    func_type = config.simulation.func_params[n][0]
+                psi_n = true_model.psi(rr, p[n], func=func_type)
+            else:
+                psi_n = true_model.psi(rr, p[n])
+
+        psi_np = to_numpy(psi_n).flatten()
+        ax.plot(rr_np, psi_np, color=cmap.color(n), linewidth=4, alpha=0.75)
+
+
+# --------------------------------------------------------------------------- #
+#  Training summary panels
+# --------------------------------------------------------------------------- #
+
+def plot_training_summary_panels(axes, model, config, n_particles, n_particle_types,
+                                 index_particles, type_list, ynorm, cmap,
+                                 embedding_cluster, logger, device):
+    """Plot embedding, edge functions, clustering, and sparsified embedding.
+
+    Fills ``axes[1]`` through ``axes[4]`` of the training summary figure
+    (``axes[0]`` is reserved for the loss curve by the caller).
+
+    Similar to flyvis-gnn's ``plot_training_summary_panels``, but computes
+    panels live rather than loading saved images.
+
+    Args:
+        axes: array of 5 matplotlib Axes.
+        model: trained GNN model (must have ``model.a`` and ``model.lin_edge``).
+        config: ParticleGNNConfig.
+        n_particles: int.
+        n_particle_types: int.
+        index_particles: list of index arrays per type.
+        type_list: (N,) tensor of ground-truth type labels.
+        ynorm: normalization tensor.
+        cmap: CustomColorMap instance.
+        embedding_cluster: EmbeddingCluster instance.
+        logger: logging.Logger for accuracy reporting.
+        device: torch device.
+
+    Returns:
+        (labels, n_clusters, new_labels, func_list, model_a_, accuracy)
+        where ``model_a_`` is the embedding with cluster medians applied.
+    """
+    from particle_gnn.sparsify import sparsify_cluster
+    from sklearn import metrics
+
+    style = default_style
+    tc = config.training
+    mc = config.graph_model
+    sim = config.simulation
+    config_model = mc.particle_model_name
+
+    # --- Panel 1: Embedding ---
+    ax = axes[1]
+    plt.sca(ax)
+    embedding = get_embedding(model.a, 0)
+    for n in range(n_particle_types):
+        ax.scatter(embedding[index_particles[n], 0],
+                   embedding[index_particles[n], 1], color=cmap.color(n), s=0.1)
+    style.xlabel(ax, 'ai0')
+    style.ylabel(ax, 'ai1')
+
+    # --- Compute rr matching the model type ---
+    if 'boids_ode' in config_model:
+        max_radius_plot = 0.04
+        rr = torch.tensor(np.linspace(-max_radius_plot, max_radius_plot, 1000)).to(device)
+    elif config_model == 'gravity_ode':
+        rr = torch.tensor(np.linspace(0, sim.max_radius * 1.3, 1000)).to(device)
+    else:
+        rr = torch.tensor(np.linspace(0, sim.max_radius, 1000)).to(device)
+
+    # --- Panel 2: Edge functions (true + learned) ---
+    ax = axes[2]
+    plt.sca(ax)
+
+    # Get learned func_list and UMAP projection (no inline visualization)
+    func_list, proj_interaction = analyze_edge_function(
+        rr=rr, vizualize=False, config=config,
+        model_MLP=model.lin_edge, model=model,
+        n_nodes=0, n_particles=n_particles, ynorm=ynorm,
+        type_list=to_numpy(type_list), cmap=cmap,
+        update_type='NA', device=device)
+
+    # Plot true psi curves (thick, behind learned)
+    _plot_true_psi(ax, rr, config, n_particle_types, cmap, device)
+
+    # Plot learned curves (thin, semi-transparent)
+    subsample = max(1, n_particles // 200) if n_particles > 200 else 1
+    type_np = to_numpy(type_list).flatten().astype(int)
+    _plot_curves_fast(
+        ax, to_numpy(rr), to_numpy(func_list),
+        type_np, cmap, ynorm=to_numpy(ynorm),
+        subsample=subsample, alpha=0.25, linewidth=1)
+
+    if config_model == 'gravity_ode':
+        ax.set_xlim([1E-3, 0.02])
+    ax.set_ylim(config.plotting.ylim)
+
+    # --- Clustering ---
+    labels, n_clusters, new_labels = sparsify_cluster(
+        tc.cluster_method, proj_interaction, embedding,
+        tc.cluster_distance_threshold, type_list,
+        n_particle_types, embedding_cluster)
+
+    accuracy = metrics.accuracy_score(to_numpy(type_list), new_labels)
+    print(f'accuracy: {np.round(accuracy, 3)}   n_clusters: {n_clusters}')
+    logger.info(f'accuracy: {np.round(accuracy, 3)}    n_clusters: {n_clusters}')
+
+    # --- Panel 3: Clustering scatter ---
+    ax = axes[3]
+    plt.sca(ax)
+    for n in np.unique(new_labels):
+        pos = np.array(np.argwhere(new_labels == n).squeeze().astype(int))
+        if pos.size > 0:
+            ax.scatter(proj_interaction[pos, 0], proj_interaction[pos, 1], s=5)
+    style.xlabel(ax, 'proj 0')
+    style.ylabel(ax, 'proj 1')
+    style.annotate(ax, f'accuracy: {np.round(accuracy, 3)},  {n_clusters} clusters',
+                   (0, 1.1), ha='left', va='top')
+
+    # --- Panel 4: Sparsified embedding ---
+    ax = axes[4]
+    plt.sca(ax)
+    model_a_ = model.a[0].clone().detach()
+    for n in range(n_clusters):
+        pos = np.argwhere(labels == n).squeeze().astype(int)
+        pos = np.array(pos)
+        if pos.size > 0:
+            median_center = model_a_[pos, :]
+            median_center = torch.median(median_center, dim=0).values
+            ax.scatter(to_numpy(model_a_[pos, 0]), to_numpy(model_a_[pos, 1]),
+                       s=1, c='r', alpha=0.25)
+            model_a_[pos, :] = median_center
+            ax.scatter(to_numpy(model_a_[pos, 0]), to_numpy(model_a_[pos, 1]),
+                       s=10, c=style.foreground)
+    style.xlabel(ax, 'ai0')
+    style.ylabel(ax, 'ai1')
+    ax.tick_params(labelsize=style.annotation_font_size)
+
+    return labels, n_clusters, new_labels, func_list, model_a_, accuracy

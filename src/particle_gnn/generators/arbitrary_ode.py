@@ -7,8 +7,8 @@ from particle_gnn.graph_utils import remove_self_loops, scatter_aggregate
 from particle_gnn.models.registry import register_simulator
 
 
-@register_simulator("PDE_A", "PDE_ParticleField_A")
-class PDE_A(nn.Module):
+@register_simulator("arbitrary_ode", "arbitrary_field_ode")
+class ArbitraryODE(nn.Module):
     """Interaction Network as proposed in this paper:
     https://proceedings.neurips.cc/paper/2016/hash/3147da8ab4a0437c15ef51a5cc7f2dc4-Abstract.html"""
 

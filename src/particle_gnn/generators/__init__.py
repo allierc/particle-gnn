@@ -1,3 +1,3 @@
-from particle_gnn.generators.PDE_A import PDE_A
-from particle_gnn.generators.PDE_B import PDE_B
-from particle_gnn.generators.PDE_G import PDE_G
+from particle_gnn.generators.arbitrary_ode import ArbitraryODE
+from particle_gnn.generators.boids_ode import BoidsODE
+from particle_gnn.generators.gravity_ode import GravityODE

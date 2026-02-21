@@ -20,7 +20,7 @@ simulation:
   boundary: "periodic"
 
 graph_model:
-  particle_model_name: "PDE_A"
+  particle_model_name: "arbitrary_ode"
   mesh_model_name: ""
   prediction: "first_derivative"
   input_size: 5

@@ -27,7 +27,7 @@ def choose_model(config=[], W=[], device=[]):
 
     # Per-model parameter setup
     match particle_model_name:
-        case 'PDE_A' | 'PDE_ParticleField_A':
+        case 'arbitrary_ode' | 'arbitrary_field_ode':
             if config.simulation.non_discrete_level > 0:
                 p = torch.ones(n_particle_types, 4, device=device) + torch.rand(n_particle_types, 4, device=device)
                 pp = []
@@ -47,9 +47,9 @@ def choose_model(config=[], W=[], device=[]):
             embedding_step = config.simulation.n_frames // 100
             model = sim_cls(aggr_type=aggr_type, p=p, func_p=func_p, sigma=sigma, bc_dpos=bc_dpos,
                             dimension=dimension, embedding_step=embedding_step)
-        case 'PDE_B' | 'PDE_ParticleField_B':
+        case 'boids_ode' | 'boids_field_ode':
             model = sim_cls(aggr_type=aggr_type, p=p, bc_dpos=bc_dpos, dimension=dimension)
-        case 'PDE_G':
+        case 'gravity_ode':
             if params[0] == [-1]:
                 p = np.linspace(0.5, 5, n_particle_types)
                 p = torch.tensor(p, device=device)

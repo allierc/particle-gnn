@@ -22,7 +22,7 @@ simulation:
   node_proliferation_map: 'pattern_Null.tif'
 
 graph_model:
-  particle_model_name: 'PDE_ParticleField_A'
+  particle_model_name: 'arbitrary_field_ode'
   mesh_model_name: ''
   prediction: 'first_derivative'
   input_size: 5

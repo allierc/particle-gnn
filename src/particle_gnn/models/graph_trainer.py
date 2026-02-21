@@ -392,7 +392,6 @@ def data_train_particle(config, erase, best_model, device):
         torch.save(list_loss, os.path.join(log_dir, 'loss.pt'))
 
         scheduler.step()
-        print(f'Epoch {epoch + 1}, Learning Rate: {scheduler.get_last_lr()[0]}')
         logger.info(f'Epoch {epoch + 1}, Learning Rate: {scheduler.get_last_lr()[0]}')
 
         from particle_gnn.figure_style import default_style as fig_style
