@@ -6,6 +6,7 @@ from time import sleep
 from torch_geometric.utils import get_mesh_laplacian
 
 from particle_gnn.generators import PDE_A, PDE_B, PDE_G
+from particle_gnn.particle_state import ParticleState
 from particle_gnn.utils import choose_boundary_values, to_numpy, get_equidistant_points
 
 
@@ -58,7 +59,8 @@ def choose_model(config=[], W=[], device=[]):
     return model, bc_pos, bc_dpos
 
 
-def init_particles(config=[], scenario='none', ratio=1, device=[]):
+def init_particlestate(config=[], scenario='none', ratio=1, device=[]):
+    """initialize particle state as a ParticleState dataclass."""
     simulation_config = config.simulation
     n_particles = simulation_config.n_particles * ratio
     n_particle_types = simulation_config.n_particle_types
@@ -77,34 +79,35 @@ def init_particles(config=[], scenario='none', ratio=1, device=[]):
     else:
         pos = torch.randn(n_particles, dimension, device=device) * 0.5
 
-    dpos = dpos_init * torch.randn((n_particles, dimension), device=device)
-    dpos = torch.clamp(dpos, min=-torch.std(dpos), max=+torch.std(dpos))
-    type = torch.zeros(int(n_particles / n_particle_types), device=device)
+    vel = dpos_init * torch.randn((n_particles, dimension), device=device)
+    vel = torch.clamp(vel, min=-torch.std(vel), max=+torch.std(vel))
+
+    particle_type = torch.zeros(int(n_particles / n_particle_types), device=device)
     for n in range(1, n_particle_types):
-        type = torch.cat((type, n * torch.ones(int(n_particles / n_particle_types), device=device)), 0)
-    if type.shape[0] < n_particles:
-        type = torch.cat((type, n * torch.ones(n_particles - type.shape[0], device=device)), 0)
+        particle_type = torch.cat((particle_type, n * torch.ones(int(n_particles / n_particle_types), device=device)), 0)
+    if particle_type.shape[0] < n_particles:
+        particle_type = torch.cat((particle_type, n * torch.ones(n_particles - particle_type.shape[0], device=device)), 0)
     if config.simulation.non_discrete_level > 0:
-        type = torch.tensor(np.arange(n_particles), device=device)
+        particle_type = torch.tensor(np.arange(n_particles), device=device)
 
-    features = torch.cat((torch.randn((n_particles, 1), device=device) * 5,
-                           0.1 * torch.randn((n_particles, 1), device=device)), 1)
-
-    type = type[:, None]
-    particle_id = torch.arange(n_particles, device=device)
-    particle_id = particle_id[:, None]
-    age = torch.zeros((n_particles, 1), device=device)
+    field = torch.cat((torch.randn((n_particles, 1), device=device) * 5,
+                        0.1 * torch.randn((n_particles, 1), device=device)), 1)
 
     if 'uniform' in scenario:
-        type = torch.ones(n_particles, device=device) * int(scenario.split()[-1])
-        type = type[:, None]
+        particle_type = torch.ones(n_particles, device=device) * int(scenario.split()[-1])
     if 'stripes' in scenario:
         l = n_particles // n_particle_types
         for n in range(n_particle_types):
             index = np.arange(n * l, (n + 1) * l)
             pos[index, 1:2] = torch.rand(l, 1, device=device) * (1 / n_particle_types) + n / n_particle_types
 
-    return pos, dpos, type, features, age, particle_id
+    return ParticleState(
+        index=torch.arange(n_particles, device=device),
+        pos=pos,
+        vel=vel,
+        particle_type=particle_type.long(),
+        field=field,
+    )
 
 
 def random_rotation_matrix(device='cpu'):
@@ -226,7 +229,6 @@ def init_mesh(config, device):
     if (config.graph_model.particle_model_name == 'PDE_ParticleField_A') | (config.graph_model.particle_model_name == 'PDE_ParticleField_B'):
         type_mesh = 0 * type_mesh
 
-    a_mesh = torch.zeros_like(type_mesh)
     type_mesh = type_mesh.to(dtype=torch.float32)
 
-    return pos_mesh, dpos_mesh, type_mesh, node_value, a_mesh, node_id_mesh, mesh_data
+    return pos_mesh, dpos_mesh, type_mesh, node_value, node_id_mesh, mesh_data

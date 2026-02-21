@@ -119,7 +119,7 @@ class ZarrArrayWriter:
 
 
 # particle-gnn field classification (mirrors particle_state.py)
-_DYNAMIC_FIELDS = ['pos', 'vel', 'field', 'age']
+_DYNAMIC_FIELDS = ['pos', 'vel', 'field']
 _STATIC_FIELDS = ['particle_type']
 # note: index is NOT saved — it is arange(n_particles) and constructed at load time
 
@@ -133,7 +133,6 @@ class ZarrSimulationWriterV3:
             pos.zarr            # (T, N, dim) float32 — dynamic
             vel.zarr            # (T, N, dim) float32 — dynamic
             field.zarr          # (T, N, F) float32 — dynamic (optional)
-            age.zarr            # (T, N) float32 — dynamic (optional)
 
     note: index is NOT saved — it is arange(n_particles) and constructed at load time.
 
@@ -219,13 +218,6 @@ class ZarrSimulationWriterV3:
             if f.ndim == 1:
                 f = f[:, np.newaxis]
             fields['field'] = f
-
-        # age: (N,) -> store as (N, 1) for consistent zarr layout
-        if state.age is not None:
-            a = to_numpy(state.age).astype(np.float32)
-            if a.ndim == 1:
-                a = a[:, np.newaxis]
-            fields['age'] = a
 
         return fields
 
@@ -395,7 +387,7 @@ def _load_zarr_v3(path: Path, fields=None) -> ParticleTimeSeries:
         }
         return ts.open(spec).result().read().result()
 
-    all_dynamic = {'pos', 'vel', 'field', 'age'}
+    all_dynamic = {'pos', 'vel', 'field'}
     all_static = {'particle_type'}
     load_fields = set(fields) if fields else (all_dynamic | all_static)
 
@@ -430,11 +422,6 @@ def _load_zarr_v3(path: Path, fields=None) -> ParticleTimeSeries:
             continue
         arr = np.array(_read_zarr(zp))
         t = torch.from_numpy(arr).float()
-
-        # age is stored as (T, N, 1) — squeeze back to (T, N)
-        if name == 'age' and t.ndim == 3 and t.shape[2] == 1:
-            t = t.squeeze(2)
-
         kwargs[name] = t
 
     return ParticleTimeSeries(**kwargs)

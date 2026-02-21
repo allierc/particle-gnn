@@ -174,14 +174,14 @@ def run_generate(config, device):
     from particle_gnn.generators.graph_data_generator import data_generate
     data_generate(
         config, device=device, visualize=True, run_vizualized=0,
-        style="color", alpha=1, erase=True, save=True, step=100, timer=False,
+        style="color", alpha=1, erase=True, save=True, step=10, timer=False,
     )
 
 
 def run_training_local(config, device):
     """Run training locally (same as GNN_Main.py -o train)."""
     from particle_gnn.models.graph_trainer import data_train
-    data_train(config=config, erase=False, best_model=None, device=device)
+    data_train(config=config, erase=True, best_model=None, device=device)
 
 
 def run_test_local(config, device):

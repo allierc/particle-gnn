@@ -8,8 +8,7 @@ packed tensor layout:
   columns 1:1+dim:      pos (position, 2D or 3D)
   columns 1+dim:1+2*dim: vel (velocity, 2D or 3D)
   column 1+2*dim:       particle_type
-  column 2+2*dim:       field (H1)
-  column 3+2*dim:       age (A1)
+  column 2+2*dim:       field (H1, variable width)
 
 classes:
   ParticleState       — single-frame particle state (N, C) -> named fields
@@ -31,7 +30,7 @@ import torch
 # field classification for timeseries classes
 # unlike flyvis-gnn (neurons don't move), particles move so pos is dynamic
 STATIC_FIELDS = {'index', 'particle_type'}
-DYNAMIC_FIELDS = {'pos', 'vel', 'field', 'age'}
+DYNAMIC_FIELDS = {'pos', 'vel', 'field'}
 ALL_FIELDS = STATIC_FIELDS | DYNAMIC_FIELDS
 
 FIELD_STATIC_FIELDS = {'index', 'pos', 'particle_type'}
@@ -63,20 +62,16 @@ def _unpack(x, dimension):
         vel=t[:, p2:v2],
         particle_type=t[:, type_idx].long(),
         field=None,
-        age=None,
     )
 
     remaining = t.shape[1] - field_start
-    if remaining >= 2:
-        result['field'] = t[:, field_start:field_start + 1]
-        result['age'] = t[:, field_start + 1]
-    elif remaining == 1:
-        result['field'] = t[:, field_start:field_start + 1]
+    if remaining >= 1:
+        result['field'] = t[:, field_start:]
 
     return result
 
 
-def _pack(index, pos, vel, particle_type, field, age, device):
+def _pack(index, pos, vel, particle_type, field, device):
     """pack named fields back into (N, C) tensor."""
     dim = pos.shape[1]
     n = pos.shape[0]
@@ -84,8 +79,6 @@ def _pack(index, pos, vel, particle_type, field, age, device):
     if field is not None:
         field_cols = field.shape[1] if field.dim() > 1 else 1
         n_cols += field_cols
-    if age is not None:
-        n_cols += 1
 
     x = torch.zeros(n, n_cols, dtype=torch.float32, device=device)
     col = 0
@@ -114,10 +107,6 @@ def _pack(index, pos, vel, particle_type, field, age, device):
             x[:, col] = field
             col += 1
 
-    if age is not None:
-        x[:, col] = age
-        col += 1
-
     return x
 
 
@@ -133,7 +122,6 @@ class ParticleState:
     vel: torch.Tensor | None = None             # (N, dim) float32 — velocity
     particle_type: torch.Tensor | None = None   # (N,) long — type label
     field: torch.Tensor | None = None           # (N, F) float32 — field / features
-    age: torch.Tensor | None = None             # (N,) float32 — age / extra
 
     @property
     def n_particles(self) -> int:
@@ -166,8 +154,8 @@ class ParticleState:
     def from_packed(cls, x: torch.Tensor | np.ndarray, dimension: int) -> ParticleState:
         """create from packed (N, C) tensor.
 
-        2D layout (C=8): [index, x, y, vx, vy, type, field, age]
-        3D layout (C=10): [index, x, y, z, vx, vy, vz, type, field1, field2]
+        2D layout (C=7+F): [index, x, y, vx, vy, type, field...]
+        3D layout (C=8+F): [index, x, y, z, vx, vy, vz, type, field...]
         """
         d = _unpack(x, dimension)
         return cls(**d)
@@ -175,7 +163,7 @@ class ParticleState:
     def to_packed(self) -> torch.Tensor:
         """pack back into (N, C) tensor for legacy compatibility."""
         return _pack(self.index, self.pos, self.vel, self.particle_type,
-                     self.field, self.age, self.device)
+                     self.field, self.device)
 
     def to(self, device: torch.device) -> ParticleState:
         """move all non-None tensors to device."""
@@ -215,7 +203,6 @@ class ParticleState:
             vel=torch.zeros(n_particles, dimension, dtype=torch.float32, device=device),
             particle_type=torch.zeros(n_particles, dtype=torch.long, device=device),
             field=torch.zeros(n_particles, 1, dtype=torch.float32, device=device),
-            age=torch.zeros(n_particles, dtype=torch.float32, device=device),
         )
 
 
@@ -224,7 +211,7 @@ class ParticleTimeSeries:
     """full simulation timeseries — static metadata + dynamic per-frame data.
 
     static fields are stored once (same for all frames): index, particle_type.
-    dynamic fields have a leading time dimension (T, N, ...): pos, vel, field, age.
+    dynamic fields have a leading time dimension (T, N, ...): pos, vel, field.
 
     follows the NeuronTimeSeries pattern from flyvis-gnn, but pos is dynamic
     because particles move (neurons don't).
@@ -238,7 +225,6 @@ class ParticleTimeSeries:
     pos: torch.Tensor | None = None             # (T, N, dim) float32
     vel: torch.Tensor | None = None             # (T, N, dim) float32
     field: torch.Tensor | None = None           # (T, N, F) float32
-    age: torch.Tensor | None = None             # (T, N) float32
 
     @property
     def n_frames(self) -> int:
@@ -317,8 +303,8 @@ class ParticleTimeSeries:
     def from_packed(cls, arr: torch.Tensor | np.ndarray, dimension: int) -> ParticleTimeSeries:
         """create from packed (T, N, C) tensor or numpy array.
 
-        2D layout (C=8): [index, x, y, vx, vy, type, field, age]
-        3D layout (C=10): [index, x, y, z, vx, vy, vz, type, field1, field2]
+        2D layout (C=7+F): [index, x, y, vx, vy, type, field...]
+        3D layout (C=8+F): [index, x, y, z, vx, vy, vz, type, field...]
         """
         if isinstance(arr, np.ndarray):
             t = torch.from_numpy(arr).float()
@@ -341,11 +327,8 @@ class ParticleTimeSeries:
         )
 
         remaining = t.shape[2] - field_start
-        if remaining >= 2:
-            result.field = t[:, :, field_start:field_start + 1]
-            result.age = t[:, :, field_start + 1]
-        elif remaining == 1:
-            result.field = t[:, :, field_start:field_start + 1]
+        if remaining >= 1:
+            result.field = t[:, :, field_start:]
 
         return result
 
@@ -399,15 +382,14 @@ class FieldState:
 
     @classmethod
     def from_packed(cls, x: torch.Tensor | np.ndarray, dimension: int) -> FieldState:
-        """create from packed (N, C) tensor. same layout as ParticleState but no age column."""
+        """create from packed (N, C) tensor. same layout as ParticleState."""
         d = _unpack(x, dimension)
-        d.pop('age', None)
         return cls(**d)
 
     def to_packed(self) -> torch.Tensor:
         """pack back into (N, C) tensor for legacy compatibility."""
         return _pack(self.index, self.pos, self.vel, self.particle_type,
-                     self.field, None, self.device)
+                     self.field, self.device)
 
     def to(self, device: torch.device) -> FieldState:
         return FieldState(**{

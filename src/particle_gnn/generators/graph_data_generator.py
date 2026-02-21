@@ -15,7 +15,7 @@ import logging
 from shutil import copyfile
 from tifffile import imread
 
-from particle_gnn.generators.utils import choose_model, init_particles, init_mesh
+from particle_gnn.generators.utils import choose_model, init_particlestate, init_mesh
 from particle_gnn.particle_state import ParticleState
 from particle_gnn.zarr_io import ZarrSimulationWriterV3, ZarrArrayWriter
 from particle_gnn.utils import (
@@ -120,12 +120,8 @@ def data_generate_particle(
     delta_t = sim.delta_t
     n_frames = sim.n_frames
     has_particle_dropout = tc.particle_dropout > 0
-    dimension = sim.dimension
-    pos_start = 1
-    pos_end = 1 + dimension
     cmap = CustomColorMap(config=config)
     dataset_name = config.dataset
-    connection_matrix_list = []
 
     folder = f"./graphs_data/{dataset_name}/"
     if erase:
@@ -165,177 +161,301 @@ def data_generate_particle(
         b = sim.angular_Bernouilli
         generative_m = np.array([stats.norm(b[0], b[2]), stats.norm(b[1], b[2])])
 
-    for run in range(config.training.n_runs):
-        check_and_clear_memory(
-            device=device,
-            iteration_number=0,
-            every_n_iterations=250,
-            memory_percentage_threshold=0.6,
-        )
+    run = 0
 
-        if "PDE_K" in mc.particle_model_name:
-            p = config.simulation.params
-            edges = np.random.choice(p[0], size=(n_particles, n_particles), p=p[1])
-            edges = np.tril(edges) + np.tril(edges, -1).T
-            np.fill_diagonal(edges, 0)
-            connection_matrix = torch.tensor(edges, dtype=torch.float32, device=device)
-            model.connection_matrix = connection_matrix.detach().clone()
-            connection_matrix_list.append(connection_matrix)
+    check_and_clear_memory(
+        device=device,
+        iteration_number=0,
+        every_n_iterations=250,
+        memory_percentage_threshold=0.6,
+    )
 
-        n_particles = sim.n_particles
+    n_particles = sim.n_particles
 
-        # zarr V3 writers for incremental saving (memory efficient)
-        x_writer = ZarrSimulationWriterV3(
-            path=f"graphs_data/{dataset_name}/x_list_{run}",
-            n_particles=n_particles,
-            dimension=dimension,
-            time_chunks=2000,
-        )
-        y_writer = ZarrArrayWriter(
-            path=f"graphs_data/{dataset_name}/y_list_{run}",
-            n_particles=n_particles,
-            n_features=dimension,
-            time_chunks=2000,
-        )
-        edge_p_p_list = []
+    # zarr V3 writers for incremental saving (memory efficient)
+    x_writer = ZarrSimulationWriterV3(
+        path=f"graphs_data/{dataset_name}/x_list_{run}",
+        n_particles=n_particles,
+        dimension=dimension,
+        time_chunks=2000,
+    )
+    y_writer = ZarrArrayWriter(
+        path=f"graphs_data/{dataset_name}/y_list_{run}",
+        n_particles=n_particles,
+        n_features=dimension,
+        time_chunks=2000,
+    )
 
-        # initialize particle and graph states
-        X1, V1, T1, H1, A1, N1 = init_particles(
-            config=config, scenario=scenario, ratio=ratio, device=device
-        )
-        edge_cache = NeighborCache()
+    # initialize particle state
+    x = init_particlestate(config=config, scenario=scenario, ratio=ratio, device=device)
+    edge_cache = NeighborCache()
 
-        time.sleep(0.5)
-        for it in trange(sim.start_frame, n_frames + 1, ncols=100):
-            # calculate type change
-            if sim.state_type == "sequence":
-                sample = torch.rand((len(T1), 1), device=device)
-                sample = (
-                    sample < (1 / config.simulation.state_params[0])
-                ) * torch.randint(0, n_particle_types, (len(T1), 1), device=device)
-                T1 = (T1 + sample) % n_particle_types
+    time.sleep(0.5)
+    for it in trange(sim.start_frame, n_frames + 1, ncols=100):
+        # calculate type change
+        if sim.state_type == "sequence":
+            sample = torch.rand((n_particles, 1), device=device)
+            sample = (
+                sample < (1 / config.simulation.state_params[0])
+            ) * torch.randint(0, n_particle_types, (n_particles, 1), device=device)
+            x.particle_type = (x.particle_type + sample.squeeze(-1).long()) % n_particle_types
 
-            x = ParticleState(
-                index=N1.clone().detach().squeeze(-1).long(),
-                pos=X1.clone().detach(),
-                vel=V1.clone().detach(),
-                particle_type=T1.clone().detach().squeeze(-1).long(),
-                field=H1.clone().detach(),
-                age=A1.clone().detach().squeeze(-1),
+        x_packed = x.to_packed()
+        index_particles = get_index_particles(
+            x_packed, n_particle_types, dimension
+        )  # can be different from frame to frame
+
+        # compute connectivity rule
+        with torch.no_grad():
+
+            if timer:
+                torch.cuda.synchronize()
+                t0 = time.perf_counter()
+
+            edge_index = get_edges_with_cache(
+                pos=x.pos,
+                bc_dpos=bc_dpos,
+                cache=edge_cache,
+                r_cut=max_radius,
+                r_skin=0.05,
+                min_radius=min_radius,
+                block=2048,
             )
 
-            x_packed = x.to_packed()
-            index_particles = get_index_particles(
-                x_packed, n_particle_types, dimension
-            )  # can be different from frame to frame
-
-            # compute connectivity rule
-            with torch.no_grad():
-
-                if timer:
-                    torch.cuda.synchronize()
-                    t0 = time.perf_counter()
-
-                edge_index = get_edges_with_cache(
-                    pos=x.pos,
-                    bc_dpos=bc_dpos,
-                    cache=edge_cache,
-                    r_cut=max_radius,
-                    r_skin=0.05,
-                    min_radius=min_radius,
-                    block=2048,
+            if timer:
+                torch.cuda.synchronize()
+                t1 = time.perf_counter()
+                print(
+                    f"[edge build] "
+                    f"N={x.n_particles:6d}, "
+                    f"E={edge_index.shape[1]:8d}, "
+                    f"time={(t1 - t0)*1000:.2f} ms"
                 )
 
-                if timer:
-                    torch.cuda.synchronize()
-                    t1 = time.perf_counter()
-                    print(
-                        f"[edge build] "
-                        f"N={x.n_particles:6d}, "
-                        f"E={edge_index.shape[1]:8d}, "
-                        f"time={(t1 - t0)*1000:.2f} ms"
-                    )
+            # model prediction
+            y = model(x, edge_index)
 
-                # model prediction
-                y = model(x, edge_index)
+        if sim.angular_sigma > 0:
+            phi = (
+                torch.randn(n_particles, device=device)
+                * sim.angular_sigma
+                / 360
+                * np.pi
+                * 2
+            )
+            cos_phi = torch.cos(phi)
+            sin_phi = torch.sin(phi)
+            new_vx = cos_phi * y[:, 0] - sin_phi * y[:, 1]
+            new_vy = sin_phi * y[:, 0] + cos_phi * y[:, 1]
+            y = torch.cat((new_vx[:, None], new_vy[:, None]), 1).clone().detach()
+        if sim.angular_Bernouilli != [-1]:
+            z_i = stats.bernoulli(b[3]).rvs(n_particles)
+            phi = np.array([g.rvs() for g in generative_m[z_i]]) / 360 * np.pi * 2
+            phi = torch.tensor(phi, device=device, dtype=torch.float32)
+            cos_phi = torch.cos(phi)
+            sin_phi = torch.sin(phi)
+            new_vx = cos_phi * y[:, 0] - sin_phi * y[:, 1]
+            new_vy = sin_phi * y[:, 0] + cos_phi * y[:, 1]
+            y = torch.cat((new_vx[:, None], new_vy[:, None]), 1).clone().detach()
 
-            if sim.angular_sigma > 0:
-                phi = (
-                    torch.randn(n_particles, device=device)
-                    * sim.angular_sigma
-                    / 360
-                    * np.pi
-                    * 2
-                )
-                cos_phi = torch.cos(phi)
-                sin_phi = torch.sin(phi)
-                new_vx = cos_phi * y[:, 0] - sin_phi * y[:, 1]
-                new_vy = sin_phi * y[:, 0] + cos_phi * y[:, 1]
-                y = torch.cat((new_vx[:, None], new_vy[:, None]), 1).clone().detach()
-            if sim.angular_Bernouilli != [-1]:
-                z_i = stats.bernoulli(b[3]).rvs(n_particles)
-                phi = np.array([g.rvs() for g in generative_m[z_i]]) / 360 * np.pi * 2
-                phi = torch.tensor(phi, device=device, dtype=torch.float32)
-                cos_phi = torch.cos(phi)
-                sin_phi = torch.sin(phi)
-                new_vx = cos_phi * y[:, 0] - sin_phi * y[:, 1]
-                new_vy = sin_phi * y[:, 0] + cos_phi * y[:, 1]
-                y = torch.cat((new_vx[:, None], new_vy[:, None]), 1).clone().detach()
-
-            # save frame to zarr
-            if (it >= 0) & save:
-                if has_particle_dropout:
-                    x_sub = x.subset(particle_dropout_mask).detach()
-                    x_sub.index = torch.arange(x_sub.n_particles, device=device)
-                    x_writer.append_state(x_sub)
-                    x_removed = x.subset(inv_particle_dropout_mask).detach()
-                    x_removed_list.append(x_removed.to_packed())
-                    y_writer.append(to_numpy(y[particle_dropout_mask].clone().detach()))
-                else:
-                    x_writer.append_state(x.detach())
-                    y_writer.append(to_numpy(y.clone().detach()))
-
-            # Particle update
-            if mc.prediction == "2nd_derivative":
-                V1 += y * delta_t
+        # save frame to zarr
+        if (it >= 0) & save:
+            if has_particle_dropout:
+                x_sub = x.subset(particle_dropout_mask).detach()
+                x_sub.index = torch.arange(x_sub.n_particles, device=device)
+                x_writer.append_state(x_sub)
+                x_removed = x.subset(inv_particle_dropout_mask).detach()
+                x_removed_list.append(x_removed.to_packed())
+                y_writer.append(to_numpy(y[particle_dropout_mask].clone().detach()))
             else:
-                V1 = y
-            X1 = bc_pos(X1 + V1 * delta_t)
-            A1 = A1 + 1
+                x_writer.append_state(x.detach())
+                y_writer.append(to_numpy(y.clone().detach()))
 
-            # output plots
-            if visualize & (run == run_vizualized) & (it % step == 0) & (it >= 0):
-                if "black" in style:
-                    plt.style.use("dark_background")
+        # particle update
+        if mc.prediction == "2nd_derivative":
+            x.vel = x.vel + y * delta_t
+        else:
+            x.vel = y
+        x.pos = bc_pos(x.pos + x.vel * delta_t)
 
+        # output plots
+        if visualize & (run == run_vizualized) & (it % step == 0) & (it >= 0):
+            if "black" in style:
+                plt.style.use("dark_background")
+
+            if "latex" in style:
+                plt.rcParams["text.usetex"] = True
+                rc("font", **{"family": "serif", "serif": ["Palatino"]})
+
+            if "bw" in style:
+                fig, ax = fig_init(formatx="%.1f", formaty="%.1f")
+                s_p = 100
+                for n in range(n_particle_types):
+                    plt.scatter(
+                        to_numpy(x.pos[index_particles[n], 0]),
+                        to_numpy(x.pos[index_particles[n], 1]),
+                        s=s_p,
+                        color="k",
+                    )
+                if tc.particle_dropout > 0:
+                    plt.scatter(
+                        x.pos[inv_particle_dropout_mask, 0].detach().cpu().numpy(),
+                        x.pos[inv_particle_dropout_mask, 1].detach().cpu().numpy(),
+                        s=25,
+                        color="k",
+                        alpha=0.75,
+                    )
+                    plt.plot(
+                        x.pos[inv_particle_dropout_mask, 0].detach().cpu().numpy(),
+                        x.pos[inv_particle_dropout_mask, 1].detach().cpu().numpy(),
+                        "+",
+                        color="w",
+                    )
+                plt.xlim([0, 1])
+                plt.ylim([0, 1])
+                if "PDE_G" in mc.particle_model_name:
+                    plt.xlim([-2, 2])
+                    plt.ylim([-2, 2])
                 if "latex" in style:
-                    plt.rcParams["text.usetex"] = True
-                    rc("font", **{"family": "serif", "serif": ["Palatino"]})
+                    plt.xlabel(r"$x$", fontsize=78)
+                    plt.ylabel(r"$y$", fontsize=78)
+                    plt.xticks(fontsize=48.0)
+                    plt.yticks(fontsize=48.0)
+                elif "frame" in style:
+                    plt.xlabel(r"$x$", fontsize=78)
+                    plt.ylabel(r"$y$", fontsize=78)
+                    plt.xticks(fontsize=48.0)
+                    plt.yticks(fontsize=48.0)
+                else:
+                    plt.xticks([])
+                    plt.yticks([])
+                plt.tight_layout()
+                plt.savefig(
+                    f"graphs_data/{dataset_name}/Fig/Fig_{run}_{it}.jpg", dpi=170.7
+                )
+                plt.close()
 
-                if "bw" in style:
-                    fig, ax = fig_init(formatx="%.1f", formaty="%.1f")
-                    s_p = 100
+            if "color" in style:
+                if mc.particle_model_name == "PDE_O":
+                    fig = plt.figure(figsize=(12, 12))
+                    plt.scatter(
+                        x.field[:, 0].detach().cpu().numpy(),
+                        x.field[:, 1].detach().cpu().numpy(),
+                        s=100,
+                        c=np.sin(to_numpy(x.field[:, 2])),
+                        vmin=-1,
+                        vmax=1,
+                        cmap="viridis",
+                    )
+                    plt.xlim([0, 1])
+                    plt.ylim([0, 1])
+                    plt.xticks([])
+                    plt.yticks([])
+                    plt.tight_layout()
+                    plt.savefig(
+                        f"graphs_data/{dataset_name}/Fig/Lut_Fig_{run}_{it}.jpg",
+                        dpi=170.7,
+                    )
+                    plt.close()
+
+                    fig = plt.figure(figsize=(12, 12))
+                    plt.scatter(
+                        to_numpy(x.pos[:, 0]),
+                        to_numpy(x.pos[:, 1]),
+                        s=10,
+                        c="lawngreen",
+                        alpha=0.75,
+                    )
+                    plt.xlim([0, 1])
+                    plt.ylim([0, 1])
+                    plt.xticks([])
+                    plt.yticks([])
+                    plt.tight_layout()
+                    plt.savefig(
+                        f"graphs_data/{dataset_name}/Fig/Rot_{run}_Fig{it}.jpg",
+                        dpi=170.7,
+                    )
+                    plt.close()
+
+                elif (mc.particle_model_name == "PDE_A") & (dimension == 3):
+                    fig = plt.figure(figsize=(20, 10))
+
+                    # Left panel: 3D view
+                    ax1 = fig.add_subplot(121, projection="3d")
                     for n in range(n_particle_types):
-                        plt.scatter(
+                        ax1.scatter(
                             to_numpy(x.pos[index_particles[n], 0]),
                             to_numpy(x.pos[index_particles[n], 1]),
+                            to_numpy(x.pos[index_particles[n], 2]),
+                            s=10,
+                            color=cmap.color(n),
+                            alpha=0.5,
+                            edgecolors="none",
+                        )
+                    ax1.set_xlim([0, 1])
+                    ax1.set_ylim([0, 1])
+                    ax1.set_zlim([0, 1])
+                    ax1.set_xlabel("X")
+                    ax1.set_ylabel("Y")
+                    ax1.set_zlabel("Z")
+
+                    # Right panel: 2D cross-section (z slice at middle)
+                    ax2 = fig.add_subplot(122)
+                    z_center = 0.5
+                    z_thickness = 0.1
+                    for n in range(n_particle_types):
+                        z_vals = to_numpy(x.pos[index_particles[n], 2])
+                        mask = np.abs(z_vals - z_center) < z_thickness
+                        ax2.scatter(
+                            to_numpy(x.pos[index_particles[n], 0])[mask],
+                            to_numpy(x.pos[index_particles[n], 1])[mask],
+                            s=15,
+                            color=cmap.color(n),
+                            alpha=0.7,
+                            edgecolors="none",
+                        )
+                    ax2.set_xlim([0, 1])
+                    ax2.set_ylim([0, 1])
+                    ax2.set_xlabel("X")
+                    ax2.set_ylabel("Y")
+                    ax2.set_title(
+                        f"Z cross-section ({z_center-z_thickness:.1f} < z < {z_center+z_thickness:.1f})"
+                    )
+                    ax2.set_aspect("equal")
+
+                    plt.tight_layout()
+                    plt.savefig(
+                        f"graphs_data/{dataset_name}/Fig/Fig_{run}_{it}.jpg",
+                        dpi=170.7,
+                    )
+                    plt.close()
+
+                else:
+                    fig, ax = fig_init(formatx="%.1f", formaty="%.1f")
+                    s_p = 25
+
+                    for n in range(n_particle_types):
+                        plt.scatter(
+                            to_numpy(x.pos[index_particles[n], 1]),
+                            to_numpy(x.pos[index_particles[n], 0]),
                             s=s_p,
-                            color="k",
+                            color=cmap.color(n),
                         )
                     if tc.particle_dropout > 0:
                         plt.scatter(
-                            x.pos[inv_particle_dropout_mask, 0].detach().cpu().numpy(),
                             x.pos[inv_particle_dropout_mask, 1].detach().cpu().numpy(),
+                            x.pos[inv_particle_dropout_mask, 0].detach().cpu().numpy(),
                             s=25,
                             color="k",
                             alpha=0.75,
                         )
                         plt.plot(
-                            x.pos[inv_particle_dropout_mask, 0].detach().cpu().numpy(),
                             x.pos[inv_particle_dropout_mask, 1].detach().cpu().numpy(),
+                            x.pos[inv_particle_dropout_mask, 0].detach().cpu().numpy(),
                             "+",
                             color="w",
                         )
+
                     plt.xlim([0, 1])
                     plt.ylim([0, 1])
                     if "PDE_G" in mc.particle_model_name:
@@ -346,205 +466,54 @@ def data_generate_particle(
                         plt.ylabel(r"$y$", fontsize=78)
                         plt.xticks(fontsize=48.0)
                         plt.yticks(fontsize=48.0)
-                    elif "frame" in style:
-                        plt.xlabel(r"$x$", fontsize=78)
-                        plt.ylabel(r"$y$", fontsize=78)
+                    if "frame" in style:
+                        plt.xlabel("x", fontsize=48)
+                        plt.ylabel("y", fontsize=48)
                         plt.xticks(fontsize=48.0)
                         plt.yticks(fontsize=48.0)
-                    else:
+                        ax.tick_params(axis="both", which="major", pad=15)
+                        plt.text(
+                            0,
+                            1.1,
+                            f"frame {it}",
+                            ha="left",
+                            va="top",
+                            transform=ax.transAxes,
+                            fontsize=48,
+                        )
+                    if "no_ticks" in style:
                         plt.xticks([])
                         plt.yticks([])
                     plt.tight_layout()
+
+                    num = f"{it:06}"
                     plt.savefig(
-                        f"graphs_data/{dataset_name}/Fig/Fig_{run}_{it}.jpg", dpi=170.7
+                        f"graphs_data/{dataset_name}/Fig/Fig_{run}_{num}.tif",
+                        dpi=80,
                     )
                     plt.close()
 
-                if "color" in style:
-                    if mc.particle_model_name == "PDE_O":
-                        fig = plt.figure(figsize=(12, 12))
-                        plt.scatter(
-                            H1[:, 0].detach().cpu().numpy(),
-                            H1[:, 1].detach().cpu().numpy(),
-                            s=100,
-                            c=np.sin(to_numpy(H1[:, 2])),
-                            vmin=-1,
-                            vmax=1,
-                            cmap="viridis",
-                        )
-                        plt.xlim([0, 1])
-                        plt.ylim([0, 1])
-                        plt.xticks([])
-                        plt.yticks([])
-                        plt.tight_layout()
-                        plt.savefig(
-                            f"graphs_data/{dataset_name}/Fig/Lut_Fig_{run}_{it}.jpg",
-                            dpi=170.7,
-                        )
-                        plt.close()
+    if save:
+        # finalize zarr writers
+        n_frames_written = x_writer.finalize()
+        y_writer.finalize()
+        print(f"generated {n_frames_written} frames total (saved as .zarr)")
 
-                        fig = plt.figure(figsize=(12, 12))
-                        plt.scatter(
-                            to_numpy(X1[:, 0]),
-                            to_numpy(X1[:, 1]),
-                            s=10,
-                            c="lawngreen",
-                            alpha=0.75,
-                        )
-                        plt.xlim([0, 1])
-                        plt.ylim([0, 1])
-                        plt.xticks([])
-                        plt.yticks([])
-                        plt.tight_layout()
-                        plt.savefig(
-                            f"graphs_data/{dataset_name}/Fig/Rot_{run}_Fig{it}.jpg",
-                            dpi=170.7,
-                        )
-                        plt.close()
+        if has_particle_dropout:
+            torch.save(
+                x_removed_list,
+                f"graphs_data/{dataset_name}/x_removed_list_{run}.pt",
+            )
+            np.save(
+                f"graphs_data/{dataset_name}/particle_dropout_mask.npy",
+                particle_dropout_mask,
+            )
+            np.save(
+                f"graphs_data/{dataset_name}/inv_particle_dropout_mask.npy",
+                inv_particle_dropout_mask,
+            )
 
-                    elif (mc.particle_model_name == "PDE_A") & (dimension == 3):
-                        fig = plt.figure(figsize=(20, 10))
-
-                        # Left panel: 3D view
-                        ax1 = fig.add_subplot(121, projection="3d")
-                        for n in range(n_particle_types):
-                            ax1.scatter(
-                                to_numpy(x.pos[index_particles[n], 0]),
-                                to_numpy(x.pos[index_particles[n], 1]),
-                                to_numpy(x.pos[index_particles[n], 2]),
-                                s=10,
-                                color=cmap.color(n),
-                                alpha=0.5,
-                                edgecolors="none",
-                            )
-                        ax1.set_xlim([0, 1])
-                        ax1.set_ylim([0, 1])
-                        ax1.set_zlim([0, 1])
-                        ax1.set_xlabel("X")
-                        ax1.set_ylabel("Y")
-                        ax1.set_zlabel("Z")
-
-                        # Right panel: 2D cross-section (z slice at middle)
-                        ax2 = fig.add_subplot(122)
-                        z_center = 0.5
-                        z_thickness = 0.1
-                        for n in range(n_particle_types):
-                            z_vals = to_numpy(x.pos[index_particles[n], 2])
-                            mask = np.abs(z_vals - z_center) < z_thickness
-                            ax2.scatter(
-                                to_numpy(x.pos[index_particles[n], 0])[mask],
-                                to_numpy(x.pos[index_particles[n], 1])[mask],
-                                s=15,
-                                color=cmap.color(n),
-                                alpha=0.7,
-                                edgecolors="none",
-                            )
-                        ax2.set_xlim([0, 1])
-                        ax2.set_ylim([0, 1])
-                        ax2.set_xlabel("X")
-                        ax2.set_ylabel("Y")
-                        ax2.set_title(
-                            f"Z cross-section ({z_center-z_thickness:.1f} < z < {z_center+z_thickness:.1f})"
-                        )
-                        ax2.set_aspect("equal")
-
-                        plt.tight_layout()
-                        plt.savefig(
-                            f"graphs_data/{dataset_name}/Fig/Fig_{run}_{it}.jpg",
-                            dpi=170.7,
-                        )
-                        plt.close()
-
-                    else:
-                        fig, ax = fig_init(formatx="%.1f", formaty="%.1f")
-                        s_p = 25
-
-                        for n in range(n_particle_types):
-                            plt.scatter(
-                                to_numpy(x.pos[index_particles[n], 1]),
-                                to_numpy(x.pos[index_particles[n], 0]),
-                                s=s_p,
-                                color=cmap.color(n),
-                            )
-                        if tc.particle_dropout > 0:
-                            plt.scatter(
-                                x.pos[inv_particle_dropout_mask, 1].detach().cpu().numpy(),
-                                x.pos[inv_particle_dropout_mask, 0].detach().cpu().numpy(),
-                                s=25,
-                                color="k",
-                                alpha=0.75,
-                            )
-                            plt.plot(
-                                x.pos[inv_particle_dropout_mask, 1].detach().cpu().numpy(),
-                                x.pos[inv_particle_dropout_mask, 0].detach().cpu().numpy(),
-                                "+",
-                                color="w",
-                            )
-
-                        plt.xlim([0, 1])
-                        plt.ylim([0, 1])
-                        if "PDE_G" in mc.particle_model_name:
-                            plt.xlim([-2, 2])
-                            plt.ylim([-2, 2])
-                        if "latex" in style:
-                            plt.xlabel(r"$x$", fontsize=78)
-                            plt.ylabel(r"$y$", fontsize=78)
-                            plt.xticks(fontsize=48.0)
-                            plt.yticks(fontsize=48.0)
-                        if "frame" in style:
-                            plt.xlabel("x", fontsize=48)
-                            plt.ylabel("y", fontsize=48)
-                            plt.xticks(fontsize=48.0)
-                            plt.yticks(fontsize=48.0)
-                            ax.tick_params(axis="both", which="major", pad=15)
-                            plt.text(
-                                0,
-                                1.1,
-                                f"frame {it}",
-                                ha="left",
-                                va="top",
-                                transform=ax.transAxes,
-                                fontsize=48,
-                            )
-                        if "no_ticks" in style:
-                            plt.xticks([])
-                            plt.yticks([])
-                        plt.tight_layout()
-
-                        num = f"{it:06}"
-                        plt.savefig(
-                            f"graphs_data/{dataset_name}/Fig/Fig_{run}_{num}.tif",
-                            dpi=80,
-                        )
-                        plt.close()
-
-        if save:
-            # finalize zarr writers
-            n_frames_written = x_writer.finalize()
-            y_writer.finalize()
-            print(f"generated {n_frames_written} frames total (saved as .zarr)")
-
-            if has_particle_dropout:
-                torch.save(
-                    x_removed_list,
-                    f"graphs_data/{dataset_name}/x_removed_list_{run}.pt",
-                )
-                np.save(
-                    f"graphs_data/{dataset_name}/particle_dropout_mask.npy",
-                    particle_dropout_mask,
-                )
-                np.save(
-                    f"graphs_data/{dataset_name}/inv_particle_dropout_mask.npy",
-                    inv_particle_dropout_mask,
-                )
-
-            torch.save(model.p, f"graphs_data/{dataset_name}/model_p.pt")
-
-    if "PDE_K" in mc.particle_model_name:
-        torch.save(
-            connection_matrix_list,
-            f"graphs_data/{dataset_name}/connection_matrix_list.pt",
-        )
+        torch.save(model.p, f"graphs_data/{dataset_name}/model_p.pt")
 
 
 def data_generate_particle_field(
@@ -571,8 +540,6 @@ def data_generate_particle_field(
     )
 
     dimension = sim.dimension
-    pos_start = 1
-    pos_end = 1 + dimension
     max_radius = sim.max_radius
     min_radius = sim.min_radius
     n_particle_types = sim.n_particle_types
@@ -615,7 +582,7 @@ def data_generate_particle_field(
         os.remove(f)
     copyfile(os.path.realpath(__file__), os.path.join(folder, "generation_code.py"))
 
-    X1_mesh, V1_mesh, T1_mesh, H1_mesh, A1_mesh, N1_mesh, mesh_data = init_mesh(config, device=device)
+    X1_mesh, V1_mesh, T1_mesh, H1_mesh, N1_mesh, mesh_data = init_mesh(config, device=device)
     mask_mesh = mesh_data["mask"].squeeze()
 
     if hasattr(sim, 'boundary') and sim.boundary == 'periodic':
@@ -641,108 +608,148 @@ def data_generate_particle_field(
     else:
         particle_dropout_mask = np.arange(n_particles)
 
-    for run in range(config.training.n_runs):
-        n_particles = sim.n_particles
+    run = 0
+    n_particles = sim.n_particles
 
-        # zarr V3 writers for incremental saving (memory efficient)
-        x_writer = ZarrSimulationWriterV3(
-            path=f"graphs_data/{dataset_name}/x_list_{run}",
-            n_particles=n_particles,
-            dimension=dimension,
-            time_chunks=2000,
-        )
-        y_writer = ZarrArrayWriter(
-            path=f"graphs_data/{dataset_name}/y_list_{run}",
-            n_particles=n_particles,
-            n_features=dimension,
-            time_chunks=2000,
-        )
-        x_mesh_list = []
-        y_mesh_list = []
-        edge_p_p_list = []
-        edge_f_p_list = []
-        id_fig = 0
+    # zarr V3 writers for incremental saving (memory efficient)
+    x_writer = ZarrSimulationWriterV3(
+        path=f"graphs_data/{dataset_name}/x_list_{run}",
+        n_particles=n_particles,
+        dimension=dimension,
+        time_chunks=2000,
+    )
+    y_writer = ZarrArrayWriter(
+        path=f"graphs_data/{dataset_name}/y_list_{run}",
+        n_particles=n_particles,
+        n_features=dimension,
+        time_chunks=2000,
+    )
+    x_mesh_list = []
+    y_mesh_list = []
+    edge_p_p_list = []
+    edge_f_p_list = []
+    id_fig = 0
 
-        X1, V1, T1, H1, _, N1 = init_particles(config=config, scenario=scenario, ratio=ratio, device=device)
+    x = init_particlestate(config=config, scenario=scenario, ratio=ratio, device=device)
 
-        if sim.shuffle_particle_types:
-            if run == 0:
-                print('shuffle types...')
-                shuffle_index = torch.randperm(n_particles, device=device)
-                T1 = T1[shuffle_index]
-                first_T1 = T1.clone().detach()
-            else:
-                T1 = first_T1.clone().detach()
+    if sim.shuffle_particle_types:
+        shuffle_index = torch.randperm(n_particles, device=device)
+        x.particle_type = x.particle_type[shuffle_index]
 
-        X1_mesh, _, _, H1_mesh, _, _, _ = init_mesh(config, device=device)
-        H1_mesh[mask_mesh == 0.0] = 0.0
-        edge_cache = NeighborCache()
+    X1_mesh, _, _, H1_mesh, _, _ = init_mesh(config, device=device)
+    H1_mesh[mask_mesh == 0.0] = 0.0
+    edge_cache = NeighborCache()
 
-        H1_mesh = torch.clamp(H1_mesh, min=0.0)
-        torch.save(mesh_data, f"graphs_data/{dataset_name}/mesh_data_{run}.pt")
+    H1_mesh = torch.clamp(H1_mesh, min=0.0)
+    torch.save(mesh_data, f"graphs_data/{dataset_name}/mesh_data_{run}.pt")
 
-        check_and_clear_memory(
-            device=device,
-            iteration_number=0,
-            every_n_iterations=250,
-            memory_percentage_threshold=0.6,
-        )
-        time.sleep(1)
+    check_and_clear_memory(
+        device=device,
+        iteration_number=0,
+        every_n_iterations=250,
+        memory_percentage_threshold=0.6,
+    )
+    time.sleep(1)
 
-        for it in range(sim.start_frame, n_frames + 1):
-            if ("siren" in mc.field_type) & (it >= 0):
-                im = imread(
-                    f"graphs_data/{sim.node_value_map}"
-                )
-                im = im[it].squeeze()
-                im = np.rot90(im, 3)
-                im = np.reshape(im, (n_nodes_per_axis * n_nodes_per_axis))
-                H1_mesh[:, 0:1] = torch.tensor(
-                    im[:, None], dtype=torch.float32, device=device
-                )
-
-            x = ParticleState(
-                index=N1.clone().detach().squeeze(-1).long(),
-                pos=X1.clone().detach(),
-                vel=V1.clone().detach(),
-                particle_type=T1.clone().detach().squeeze(-1).long(),
-                field=H1.clone().detach(),
+    for it in range(sim.start_frame, n_frames + 1):
+        if ("siren" in mc.field_type) & (it >= 0):
+            im = imread(
+                f"graphs_data/{sim.node_value_map}"
+            )
+            im = im[it].squeeze()
+            im = np.rot90(im, 3)
+            im = np.reshape(im, (n_nodes_per_axis * n_nodes_per_axis))
+            H1_mesh[:, 0:1] = torch.tensor(
+                im[:, None], dtype=torch.float32, device=device
             )
 
-            x_packed = x.to_packed()
-            if it == sim.start_frame:
-                index_particles = get_index_particles(x_packed, n_particle_types, dimension)
+        x_packed = x.to_packed()
+        if it == sim.start_frame:
+            index_particles = get_index_particles(x_packed, n_particle_types, dimension)
 
-            x_mesh = torch.concatenate(
-                (
-                    N1_mesh.clone().detach(),
-                    X1_mesh.clone().detach(),
-                    V1_mesh.clone().detach(),
-                    T1_mesh.clone().detach(),
-                    H1_mesh.clone().detach(),
-                ),
-                1,
+        x_mesh = torch.concatenate(
+            (
+                N1_mesh.clone().detach(),
+                X1_mesh.clone().detach(),
+                V1_mesh.clone().detach(),
+                T1_mesh.clone().detach(),
+                H1_mesh.clone().detach(),
+            ),
+            1,
+        )
+
+        x_pf_packed = torch.concatenate((x_mesh, x_packed), dim=0)
+        x_pf_state = ParticleState.from_packed(x_pf_packed, dimension)
+
+        with torch.no_grad():
+
+            edge_index = get_edges_with_cache(
+                pos=x.pos,
+                bc_dpos=bc_dpos,
+                cache=edge_cache,
+                r_cut=max_radius,
+                r_skin=0.05,
+                min_radius=min_radius,
+                block=2048
             )
 
-            x_pf_packed = torch.concatenate((x_mesh, x_packed), dim=0)
-            x_pf_state = ParticleState.from_packed(x_pf_packed, dimension)
+            if not has_particle_dropout:
+                edge_p_p_list.append(edge_index)
 
-            with torch.no_grad():
-
-                edge_index = get_edges_with_cache(
-                    pos=x.pos,
-                    bc_dpos=bc_dpos,
-                    cache=edge_cache,
-                    r_cut=max_radius,
-                    r_skin=0.05,
-                    min_radius=min_radius,
-                    block=2048
+            pos_pf = x_pf_state.pos
+            distance = torch.sum(
+                bc_dpos(
+                    pos_pf[:, None, :]
+                    - pos_pf[None, :, :]
                 )
+                ** 2,
+                dim=2,
+            )
+            adj_t = (
+                (distance < (max_radius / 2) ** 2) & (distance > min_radius**2)
+            ).float() * 1
+            edge_index_fp = adj_t.nonzero().t().contiguous()
+            pos_fp = torch.argwhere(
+                (edge_index_fp[1, :] >= n_nodes) & (edge_index_fp[0, :] < n_nodes)
+            )
+            pos_fp = to_numpy(pos_fp[:, 0])
+            edge_index_fp = edge_index_fp[:, pos_fp]
+            if not has_particle_dropout:
+                edge_f_p_list.append(edge_index_fp)
 
-                if not has_particle_dropout:
-                    edge_p_p_list.append(edge_index)
+            y0 = model_p_p(x, edge_index, has_field=False)
+            y1 = model_f_p(x_pf_state, edge_index_fp, has_field=True)[n_nodes:]
+            y = y0 + y1
 
-                pos_pf = x_pf_state.pos
+        # save frame to zarr
+        if (it >= 0) & save:
+            if has_particle_dropout:
+                x_removed = x.subset(inv_particle_dropout_mask).detach()
+                x_removed_list.append(x_removed.to_packed())
+                x_sub = x.subset(particle_dropout_mask).detach()
+                x_sub.index = torch.arange(x_sub.n_particles, device=device)
+                x_writer.append_state(x_sub)
+                y_writer.append(to_numpy(y[particle_dropout_mask].clone().detach()))
+
+                x_sub_packed = x_sub.to_packed()
+                distance = torch.sum(
+                    bc_dpos(
+                        x_sub.pos[:, None, :]
+                        - x_sub.pos[None, :, :]
+                    )
+                    ** 2,
+                    dim=2,
+                )
+                adj_t = (
+                    (distance < max_radius**2) & (distance > min_radius**2)
+                ).float() * 1
+                edge_index = adj_t.nonzero().t().contiguous()
+                edge_p_p_list.append(edge_index)
+
+                x_pf_dropout = torch.concatenate((x_mesh, x_sub_packed), dim=0)
+                x_pf_dropout_state = ParticleState.from_packed(x_pf_dropout, dimension)
+                pos_pf = x_pf_dropout_state.pos
+
                 distance = torch.sum(
                     bc_dpos(
                         pos_pf[:, None, :]
@@ -754,155 +761,103 @@ def data_generate_particle_field(
                 adj_t = (
                     (distance < (max_radius / 2) ** 2) & (distance > min_radius**2)
                 ).float() * 1
-                edge_index_fp = adj_t.nonzero().t().contiguous()
-                pos_fp = torch.argwhere(
-                    (edge_index_fp[1, :] >= n_nodes) & (edge_index_fp[0, :] < n_nodes)
+                edge_index = adj_t.nonzero().t().contiguous()
+                pos_idx = torch.argwhere(
+                    (edge_index[1, :] >= n_nodes) & (edge_index[0, :] < n_nodes)
                 )
-                pos_fp = to_numpy(pos_fp[:, 0])
-                edge_index_fp = edge_index_fp[:, pos_fp]
-                if not has_particle_dropout:
-                    edge_f_p_list.append(edge_index_fp)
+                pos_idx = to_numpy(pos_idx[:, 0])
+                edge_index = edge_index[:, pos_idx]
+                edge_f_p_list.append(edge_index)
+            else:
+                x_writer.append_state(x.detach())
+                y_writer.append(to_numpy(y.clone().detach()))
 
-                y0 = model_p_p(x, edge_index, has_field=False)
-                y1 = model_f_p(x_pf_state, edge_index_fp, has_field=True)[n_nodes:]
-                y = y0 + y1
+            x_mesh_list.append(x_mesh.clone().detach())
+            field_start = 2 + 2 * dimension
+            y_mesh_list.append(torch.zeros_like(x_mesh[:, field_start:field_start + 2]))
 
-            # save frame to zarr
-            if (it >= 0) & save:
-                if has_particle_dropout:
-                    x_removed = x.subset(inv_particle_dropout_mask).detach()
-                    x_removed_list.append(x_removed.to_packed())
-                    x_sub = x.subset(particle_dropout_mask).detach()
-                    x_sub.index = torch.arange(x_sub.n_particles, device=device)
-                    x_writer.append_state(x_sub)
-                    y_writer.append(to_numpy(y[particle_dropout_mask].clone().detach()))
+        # particle update
+        with torch.no_grad():
+            if mc.prediction == "2nd_derivative":
+                x.vel = x.vel + y * delta_t
+            else:
+                x.vel = y
 
-                    x_sub_packed = x_sub.to_packed()
-                    distance = torch.sum(
-                        bc_dpos(
-                            x_sub.pos[:, None, :]
-                            - x_sub.pos[None, :, :]
-                        )
-                        ** 2,
-                        dim=2,
-                    )
-                    adj_t = (
-                        (distance < max_radius**2) & (distance > min_radius**2)
-                    ).float() * 1
-                    edge_index = adj_t.nonzero().t().contiguous()
-                    edge_p_p_list.append(edge_index)
+            if bounce:
+                x.pos = x.pos + x.vel * delta_t
+                gap = 0.005
+                bouncing_pos = torch.argwhere(
+                    (x.pos[:, 0] <= 0.1 + gap) | (x.pos[:, 0] >= 0.9 - gap)
+                ).squeeze()
+                if bouncing_pos.numel() > 0:
+                    x.vel[bouncing_pos, 0] = -0.7 * bounce_coeff * x.vel[bouncing_pos, 0]
+                    x.pos[bouncing_pos, 0] = x.pos[bouncing_pos, 0] + x.vel[bouncing_pos, 0] * delta_t * 10
+                bouncing_pos = torch.argwhere(
+                    (x.pos[:, 1] <= 0.1 + gap) | (x.pos[:, 1] >= 0.9 - gap)
+                ).squeeze()
+                if bouncing_pos.numel() > 0:
+                    x.vel[bouncing_pos, 1] = -0.7 * bounce_coeff * x.vel[bouncing_pos, 1]
+                    x.pos[bouncing_pos, 1] = x.pos[bouncing_pos, 1] + x.vel[bouncing_pos, 1] * delta_t * 10
+            else:
+                x.pos = bc_pos(x.pos + x.vel * delta_t)
 
-                    x_pf_dropout = torch.concatenate((x_mesh, x_sub_packed), dim=0)
-                    pos_pf = x_pf_dropout[:, pos_start:pos_end]
+        if visualize & (run == run_vizualized) & (it % step == 0) & (it >= 0):
+            num = f"{id_fig:06}"
+            id_fig += 1
 
-                    distance = torch.sum(
-                        bc_dpos(
-                            pos_pf[:, None, :]
-                            - pos_pf[None, :, :]
-                        )
-                        ** 2,
-                        dim=2,
-                    )
-                    adj_t = (
-                        (distance < (max_radius / 2) ** 2) & (distance > min_radius**2)
-                    ).float() * 1
-                    edge_index = adj_t.nonzero().t().contiguous()
-                    pos_idx = torch.argwhere(
-                        (edge_index[1, :] >= n_nodes) & (edge_index[0, :] < n_nodes)
-                    )
-                    pos_idx = to_numpy(pos_idx[:, 0])
-                    edge_index = edge_index[:, pos_idx]
-                    edge_f_p_list.append(edge_index)
-                else:
-                    x_writer.append_state(x.detach())
-                    y_writer.append(to_numpy(y.clone().detach()))
-
-                x_mesh_list.append(x_mesh.clone().detach())
-                field_start = 2 + 2 * dimension
-                y_mesh_list.append(torch.zeros_like(x_mesh[:, field_start:field_start + 2]))
-
-            # Particle update
-            with torch.no_grad():
-                if mc.prediction == "2nd_derivative":
-                    V1 += y * delta_t
-                else:
-                    V1 = y
-
-                if bounce:
-                    X1 = X1 + V1 * delta_t
-                    gap = 0.005
-                    bouncing_pos = torch.argwhere(
-                        (X1[:, 0] <= 0.1 + gap) | (X1[:, 0] >= 0.9 - gap)
-                    ).squeeze()
-                    if bouncing_pos.numel() > 0:
-                        V1[bouncing_pos, 0] = -0.7 * bounce_coeff * V1[bouncing_pos, 0]
-                        X1[bouncing_pos, 0] += V1[bouncing_pos, 0] * delta_t * 10
-                    bouncing_pos = torch.argwhere(
-                        (X1[:, 1] <= 0.1 + gap) | (X1[:, 1] >= 0.9 - gap)
-                    ).squeeze()
-                    if bouncing_pos.numel() > 0:
-                        V1[bouncing_pos, 1] = -0.7 * bounce_coeff * V1[bouncing_pos, 1]
-                        X1[bouncing_pos, 1] += V1[bouncing_pos, 1] * delta_t * 10
-                else:
-                    X1 = bc_pos(X1 + V1 * delta_t)
-
-            if visualize & (run == run_vizualized) & (it % step == 0) & (it >= 0):
-                num = f"{id_fig:06}"
-                id_fig += 1
-
-                matplotlib.rcParams["savefig.pad_inches"] = 0
-                fig = plt.figure(figsize=(12, 12))
-                ax = fig.add_subplot(1, 1, 1)
-                ax.xaxis.set_major_locator(plt.MaxNLocator(3))
-                ax.yaxis.set_major_locator(plt.MaxNLocator(3))
-                ax.xaxis.set_major_formatter(FormatStrFormatter("%.1f"))
-                ax.yaxis.set_major_formatter(FormatStrFormatter("%.1f"))
-                ax.tick_params(axis="both", which="major", pad=15)
-                s_p = 20
-                for n in range(n_particle_types):
-                    plt.scatter(
-                        to_numpy(x.pos[index_particles[n], 1]),
-                        to_numpy(x.pos[index_particles[n], 0]),
-                        s=s_p,
-                        color=cmap.color(n),
-                    )
-                plt.xlim([0, 1])
-                plt.ylim([0, 1])
-                plt.xticks([])
-                plt.yticks([])
-                plt.tight_layout()
-                plt.savefig(
-                    f"graphs_data/{dataset_name}/Fig/Fig_{run}_{it}.jpg", dpi=170.7
+            matplotlib.rcParams["savefig.pad_inches"] = 0
+            fig = plt.figure(figsize=(12, 12))
+            ax = fig.add_subplot(1, 1, 1)
+            ax.xaxis.set_major_locator(plt.MaxNLocator(3))
+            ax.yaxis.set_major_locator(plt.MaxNLocator(3))
+            ax.xaxis.set_major_formatter(FormatStrFormatter("%.1f"))
+            ax.yaxis.set_major_formatter(FormatStrFormatter("%.1f"))
+            ax.tick_params(axis="both", which="major", pad=15)
+            s_p = 20
+            for n in range(n_particle_types):
+                plt.scatter(
+                    to_numpy(x.pos[index_particles[n], 1]),
+                    to_numpy(x.pos[index_particles[n], 0]),
+                    s=s_p,
+                    color=cmap.color(n),
                 )
-                plt.close()
-
-        if save:
-            # finalize zarr writers
-            n_frames_written = x_writer.finalize()
-            y_writer.finalize()
-            print(f"generated {n_frames_written} frames total (saved as .zarr)")
-
-            if has_particle_dropout:
-                torch.save(
-                    x_removed_list,
-                    f"graphs_data/{dataset_name}/x_removed_list_{run}.pt",
-                )
-                np.save(
-                    f"graphs_data/{dataset_name}/particle_dropout_mask.npy",
-                    particle_dropout_mask,
-                )
-                np.save(
-                    f"graphs_data/{dataset_name}/inv_particle_dropout_mask.npy",
-                    inv_particle_dropout_mask,
-                )
-
-            torch.save(x_mesh_list, f"graphs_data/{dataset_name}/x_mesh_list_{run}.pt")
-            torch.save(y_mesh_list, f"graphs_data/{dataset_name}/y_mesh_list_{run}.pt")
-            torch.save(
-                edge_p_p_list, f"graphs_data/{dataset_name}/edge_p_p_list{run}.pt"
+            plt.xlim([0, 1])
+            plt.ylim([0, 1])
+            plt.xticks([])
+            plt.yticks([])
+            plt.tight_layout()
+            plt.savefig(
+                f"graphs_data/{dataset_name}/Fig/Fig_{run}_{it}.jpg", dpi=170.7
             )
+            plt.close()
+
+    if save:
+        # finalize zarr writers
+        n_frames_written = x_writer.finalize()
+        y_writer.finalize()
+        print(f"generated {n_frames_written} frames total (saved as .zarr)")
+
+        if has_particle_dropout:
             torch.save(
-                edge_f_p_list, f"graphs_data/{dataset_name}/edge_f_p_list{run}.pt"
+                x_removed_list,
+                f"graphs_data/{dataset_name}/x_removed_list_{run}.pt",
+            )
+            np.save(
+                f"graphs_data/{dataset_name}/particle_dropout_mask.npy",
+                particle_dropout_mask,
+            )
+            np.save(
+                f"graphs_data/{dataset_name}/inv_particle_dropout_mask.npy",
+                inv_particle_dropout_mask,
             )
 
-        print('data generated...')
+        torch.save(x_mesh_list, f"graphs_data/{dataset_name}/x_mesh_list_{run}.pt")
+        torch.save(y_mesh_list, f"graphs_data/{dataset_name}/y_mesh_list_{run}.pt")
+        torch.save(
+            edge_p_p_list, f"graphs_data/{dataset_name}/edge_p_p_list{run}.pt"
+        )
+        torch.save(
+            edge_f_p_list, f"graphs_data/{dataset_name}/edge_f_p_list{run}.pt"
+        )
+
+    print('data generated...')

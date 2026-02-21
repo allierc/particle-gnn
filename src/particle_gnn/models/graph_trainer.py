@@ -145,9 +145,6 @@ def data_train_particle(config, erase, best_model, device):
     else:
         start_epoch = 0
         net = f"{log_dir}/models/best_model_with_{n_runs - 1}_graphs.pt"
-    if 'PDE_K' in mc.particle_model_name:
-        model.connection_matrix = torch.load(f'graphs_data/{dataset_name}/connection_matrix_list.pt', map_location=device)
-
     lr = tc.learning_rate_start
     lr_embedding = tc.learning_rate_embedding_start
     optimizer, n_total_params = set_trainable_parameters(model, lr_embedding, lr)
@@ -406,7 +403,7 @@ def data_train_particle(config, erase, best_model, device):
         plt.ylabel('Loss', fontsize=12)
         plt.xlabel('Epochs', fontsize=12)
 
-        if ('PDE_T' not in mc.particle_model_name) & ('PDE_K' not in mc.particle_model_name) & (
+        if ('PDE_T' not in mc.particle_model_name) & (
                 'PDE_MLPs' not in mc.particle_model_name) & (
                 'PDE_F' not in mc.particle_model_name) & ('PDE_M' not in mc.particle_model_name) & (
                 has_bounding_box == False):
@@ -519,9 +516,6 @@ def data_train_particle(config, erase, best_model, device):
                                 case 'PDE_E':
                                     in_features = torch.cat((rr[:, None] / max_radius, 0 * rr[:, None],
                                                              rr[:, None] / max_radius, embedding_, embedding_), dim=1)
-                                case 'PDE_K':
-                                    in_features = torch.cat((rr[:, None] / max_radius, 0 * rr[:, None],
-                                                             rr[:, None] / max_radius), dim=1)
                             pred.append(model.lin_edge(in_features.float()))
                         pred = torch.stack(pred)
                         loss = (pred[:, :, 0] - y_func_list.clone().detach()).norm(2)
@@ -710,13 +704,6 @@ def data_test_particle(config=None, config_file=None, visualize=False, style='co
     state_dict = torch.load(net, map_location=device, weights_only=True)
     model.load_state_dict(state_dict['model_state_dict'])
     model.eval()
-
-    if 'PDE_K' in mc.particle_model_name:
-        model.connection_matrix = torch.load(f'graphs_data/{dataset_name}/connection_matrix_list.pt', map_location=device)
-        timeit = np.load(f'graphs_data/{dataset_name}/times_train_springs_example.npy',
-                         allow_pickle=True)
-        timeit = timeit[run][0]
-        time_id = 0
 
     if has_field:
         n_nodes_per_axis = int(np.sqrt(sim.n_nodes))
@@ -1057,12 +1044,6 @@ def data_test_particle(config=None, config_file=None, visualize=False, style='co
                 plt.ylim([-1.2, 1.2])
                 plt.xticks([])
                 plt.yticks([])
-            if 'PDE_K' in mc.particle_model_name:
-                plt.xlim([-3, 3])
-                plt.ylim([-3, 3])
-                plt.xticks(fontsize=24)
-                plt.yticks(fontsize=24)
-
             plt.tight_layout()
             plt.savefig(f"./{log_dir}/tmp_recons/Fig_{config_file}_{run}_{num}.tif", dpi=100)
             plt.close()
