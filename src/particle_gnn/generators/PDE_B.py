@@ -3,6 +3,7 @@ import torch_geometric as pyg
 import torch_geometric.utils as pyg_utils
 import torch
 from particle_gnn.utils import to_numpy
+from particle_gnn.particle_state import ParticleState
 
 class PDE_B(pyg.nn.MessagePassing):
     """Interaction Network as proposed in this paper:
@@ -35,19 +36,16 @@ class PDE_B(pyg.nn.MessagePassing):
         self.a4 = 0.5E-5
         self.a5 = 1E-8
 
-    def forward(self, data=[], has_field=False):
-        x, edge_index = data.x, data.edge_index
-
+    def forward(self, state: ParticleState, edge_index: torch.Tensor, has_field=False):
         if has_field:
-            field = x[:,6:7]
+            field = state.field
         else:
-            field = torch.ones_like(x[:,0:1])
+            field = torch.ones(state.n_particles, 1, dtype=state.pos.dtype, device=state.pos.device)
 
         edge_index, _ = pyg_utils.remove_self_loops(edge_index)
-        particle_type = to_numpy(x[:, 1 + 2*self.dimension])
-        parameters = self.p[particle_type, :]
-        d_pos = x[:, self.dimension+1:1 + 2*self.dimension].clone().detach()
-        dd_pos = self.propagate(edge_index, pos=x[:, 1:self.dimension+1], parameters=parameters, d_pos=d_pos, field=field)
+        parameters = self.p[to_numpy(state.particle_type), :]
+        d_pos = state.vel.clone().detach()
+        dd_pos = self.propagate(edge_index, pos=state.pos, parameters=parameters, d_pos=d_pos, field=field)
 
         return dd_pos
 

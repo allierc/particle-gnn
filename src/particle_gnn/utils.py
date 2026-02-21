@@ -126,42 +126,32 @@ def symmetric_cutoff(x, percent=1):
     return x_lower, x_upper
 
 
-def norm_area(xx, device):
+def norm_area(x, device):
 
-    pos = torch.argwhere(xx[:, -1]<1.0)
-    ax = torch.std(xx[pos, -1])
+    pos = torch.argwhere(x[:, -1]<1.0)
+    ax = torch.std(x[pos, -1])
 
     return torch.tensor([ax], device=device)
 
 
-def norm_velocity(xx, dimension, device):
-    if dimension == 2:
-        vx = torch.std(xx[:, 3])
-        vy = torch.std(xx[:, 4])
-        nvx = np.array(xx[:, 3].detach().cpu())
-        vx01, vx99 = symmetric_cutoff(nvx)
-        nvy = np.array(xx[:, 4].detach().cpu())
-        vy01, vy99 = symmetric_cutoff(nvy)
+def norm_velocity(x, dimension, device):
+    from particle_gnn.particle_state import ParticleState
+    if isinstance(x, ParticleState):
+        vel = x.vel
     else:
-        vx = torch.std(xx[:, 4])
-        vy = torch.std(xx[:, 5])
-        vz = torch.std(xx[:, 6])
-        nvx = np.array(xx[:, 4].detach().cpu())
-        vx01, vx99 = symmetric_cutoff(nvx)
-        nvy = np.array(xx[:, 5].detach().cpu())
-        vy01, vy99 = symmetric_cutoff(nvy)
-        nvz = np.array(xx[:, 6].detach().cpu())
-        vz01, vz99 = symmetric_cutoff(nvz)
+        vel_start = 1 + dimension
+        vel_end = 1 + 2 * dimension
+        vel = x[:, vel_start:vel_end]
 
-    # return torch.tensor([vx01, vx99, vy01, vy99, vx, vy], device=device)
+    vx = torch.std(vel[:, 0])
 
     return torch.tensor([vx], device=device)
 
 
-def get_2d_bounding_box(xx):
+def get_2d_bounding_box(pos):
 
-    x_min, y_min = torch.min(xx, dim=0).values
-    x_max, y_max = torch.max(xx, dim=0).values
+    x_min, y_min = torch.min(pos, dim=0).values
+    x_max, y_max = torch.max(pos, dim=0).values
 
     bounding_box = {
         'x_min': x_min.item(),
@@ -173,10 +163,10 @@ def get_2d_bounding_box(xx):
     return bounding_box
 
 
-def get_3d_bounding_box(xx):
+def get_3d_bounding_box(pos):
 
-    x_min, y_min, z_min = torch.min(xx, dim=0).values
-    x_max, y_max, z_max = torch.max(xx, dim=0).values
+    x_min, y_min, z_min = torch.min(pos, dim=0).values
+    x_max, y_max, z_max = torch.max(pos, dim=0).values
 
     bounding_box = {
         'x_min': x_min.item(),
@@ -190,17 +180,20 @@ def get_3d_bounding_box(xx):
     return bounding_box
 
 
-def norm_position(xx, dimension, device):
-    if dimension == 2:
-        bounding_box = get_2d_bounding_box(xx[:, 1:3]* 1.1)
-        posnorm = max(bounding_box.values())
+def norm_position(x, dimension, device):
+    from particle_gnn.particle_state import ParticleState
+    if isinstance(x, ParticleState):
+        pos = x.pos
+    else:
+        pos = x[:, 1:1 + dimension]
 
+    if dimension == 2:
+        bounding_box = get_2d_bounding_box(pos * 1.1)
+        posnorm = max(bounding_box.values())
         return torch.tensor(posnorm, dtype=torch.float32, device=device), torch.tensor([bounding_box['x_max']/posnorm, bounding_box['y_max']/posnorm], dtype=torch.float32, device=device)
     else:
-
-        bounding_box = get_3d_bounding_box(xx[:, 1:4]* 1.1)
+        bounding_box = get_3d_bounding_box(pos * 1.1)
         posnorm = max(bounding_box.values())
-
         return torch.tensor(posnorm, dtype=torch.float32, device=device), torch.tensor([bounding_box['x_max']/posnorm, bounding_box['y_max']/posnorm, bounding_box['z_max']/posnorm], dtype=torch.float32, device=device)
 
 
@@ -417,12 +410,16 @@ def check_and_clear_memory(
 
 
 def get_index_particles(x, n_particle_types, dimension):
+    from particle_gnn.particle_state import ParticleState
+    if isinstance(x, ParticleState):
+        ptype = x.particle_type
+    else:
+        type_col = 1 + 2 * dimension
+        ptype = x[:, type_col]
+
     index_particles = []
     for n in range(n_particle_types):
-        if dimension == 2:
-            index = np.argwhere(x[:, 5].detach().cpu().numpy() == n)
-        elif dimension == 3:
-            index = np.argwhere(x[:, 7].detach().cpu().numpy() == n)
+        index = np.argwhere(ptype.detach().cpu().numpy() == n)
         index_particles.append(index.squeeze())
     return index_particles
 
@@ -453,7 +450,11 @@ def edges_radius_blockwise(
     Returns:
         edge_index: LongTensor of shape [2, E] on the same device as x
     """
-    pos = x[:, 1:dimension+1]
+    from particle_gnn.particle_state import ParticleState
+    if isinstance(x, ParticleState):
+        pos = x.pos
+    else:
+        pos = x[:, 1:dimension+1]
     device = pos.device
     N = pos.shape[0]
     min2 = float(min_radius * min_radius)

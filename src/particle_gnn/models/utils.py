@@ -143,7 +143,11 @@ def choose_training_model(model_config=None, device=None):
 
 
 def get_type_list(x, dimension):
-    type_list = x[:, 1 + 2 * dimension:2 + 2 * dimension].clone().detach()
+    from particle_gnn.particle_state import ParticleState
+    if isinstance(x, ParticleState):
+        return x.particle_type.clone().detach().unsqueeze(-1).float()
+    type_col = 1 + 2 * dimension
+    type_list = x[:, type_col:type_col + 1].clone().detach()
     return type_list
 
 
@@ -279,6 +283,8 @@ def plot_training(config, pred, gt, log_dir, epoch, N, x, index_particles, n_par
     do_tracking = train_config.do_tracking
     max_radius = simulation_config.max_radius
     n_runs = train_config.n_runs
+    dimension = simulation_config.dimension
+    type_col = 1 + 2 * dimension
 
     matplotlib.rcParams['savefig.pad_inches'] = 0
 
@@ -386,7 +392,7 @@ def plot_training(config, pred, gt, log_dir, epoch, N, x, index_particles, n_par
                         plt.plot(to_numpy(rr),
                                 to_numpy(func * ynorm),
                                 linewidth=2,
-                                color=cmap.color(to_numpy(x[n, 5]).astype(int)), alpha=0.25)
+                                color=cmap.color(to_numpy(x[n, type_col]).astype(int)), alpha=0.25)
                 if (model_config.particle_model_name == 'PDE_G') | (model_config.particle_model_name == 'PDE_E'):
                     plt.xlim([0, 0.02])
                 plt.tight_layout()
@@ -431,6 +437,8 @@ def plot_training_particle_field(config, has_siren, has_siren_time, model_f, n_f
     simulation_config = config.simulation
     train_config = config.training
     model_config = config.graph_model
+    dimension = simulation_config.dimension
+    type_col = 1 + 2 * dimension
 
     max_radius = simulation_config.max_radius
 
@@ -450,7 +458,7 @@ def plot_training_particle_field(config, has_siren, has_siren_time, model_f, n_f
         plt.axis('off')
     embedding = get_embedding(model.a, dataset_num)
     if n_neuron_types > 1000:
-        plt.scatter(embedding[:, 0], embedding[:, 1], c=to_numpy(x[:, 5]) / n_neurons, s=1, cmap='viridis')
+        plt.scatter(embedding[:, 0], embedding[:, 1], c=to_numpy(x[:, type_col]) / n_neurons, s=1, cmap='viridis')
     else:
         for n in range(n_neuron_types):
             plt.scatter(embedding[index_particles[n], 0],
@@ -491,7 +499,7 @@ def plot_training_particle_field(config, has_siren, has_siren_time, model_f, n_f
             plt.plot(to_numpy(rr),
                      to_numpy(func * ynorm),
                      linewidth=8,
-                     color=cmap.color(to_numpy(x[n, 5]).astype(int)), alpha=0.25)
+                     color=cmap.color(to_numpy(x[n, type_col]).astype(int)), alpha=0.25)
 
     plt.tight_layout()
     plt.savefig(f"./{log_dir}/tmp_training/function/MLP1/{model_name}_function_{epoch}_{N}.tif", dpi=170.7)

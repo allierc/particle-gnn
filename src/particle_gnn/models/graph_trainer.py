@@ -17,10 +17,11 @@ import random
 from particle_gnn.models.utils import *
 from particle_gnn.utils import *
 from particle_gnn.models.Siren_Network import *
-from particle_gnn.models.Ghost_Particles import Ghost_Particles
 from particle_gnn.sparsify import EmbeddingCluster, sparsify_cluster, clustering_evaluation
 from particle_gnn.generators.utils import choose_model
 from particle_gnn.fitting_models import linear_model
+from particle_gnn.particle_state import ParticleState, ParticleTimeSeries
+from particle_gnn.zarr_io import load_simulation_data, load_raw_array
 
 from geomloss import SamplesLoss
 from sklearn.neighbors import NearestNeighbors
@@ -83,9 +84,7 @@ def data_train_particle(config, erase, best_model, device):
 
     target_batch_size = tc.batch_size
     replace_with_cluster = 'replace' in tc.sparsity
-    has_ghost_particles = tc.n_ghosts > 0
     has_bounding_box = 'PDE_F' in mc.particle_model_name
-    n_ghosts = tc.n_ghosts
     if tc.small_init_batch_size:
         get_batch_size = increasing_batch_size(target_batch_size)
     else:
@@ -96,39 +95,26 @@ def data_train_particle(config, erase, best_model, device):
     n_runs = tc.n_runs
 
     log_dir, logger = create_log_dir(config, erase)
-    print(f'graph files N: {n_runs}')
-    logger.info(f'graph files N: {n_runs}')
     time.sleep(0.5)
     print('load data ...')
-    x_list = []
-    y_list = []
 
-    run_lengths = list()
-    time.sleep(0.5)
-    n_particles_max = 0
+    x_ts = load_simulation_data(f'graphs_data/{dataset_name}/x_list_0', dimension)
+    y_raw = load_raw_array(f'graphs_data/{dataset_name}/y_list_0')
+    n_particles_max = x_ts.n_particles
+    n_ts_frames = x_ts.n_frames
 
-    for run in trange(n_runs, ncols=100):
-        x = np.load(f'graphs_data/{dataset_name}/x_list_{run}.npy')
-        y = np.load(f'graphs_data/{dataset_name}/y_list_{run}.npy')
-        if np.isnan(x).any() | np.isnan(y).any():
-            print('Pb isnan')
-        if x[0].shape[0] > n_particles_max:
-            n_particles_max = x[0].shape[0]
-        x_list.append(x)
-        y_list.append(y)
-        run_lengths.append(len(x))
-    x = torch.tensor(x_list[0][0], dtype=torch.float32, device=device)
-    y = torch.tensor(y_list[0][0], dtype=torch.float32, device=device)
+    # compute normalization from sampled frames
+    x = x_ts.frame(0).to_packed().to(device)
+    y = torch.tensor(y_raw[0], dtype=torch.float32, device=device)
     time.sleep(0.5)
-    for run in trange(0, n_runs, max(n_runs // 10, 1), ncols=100):
-        for k in range(run_lengths[run] - 5):
-            if (k % 10 == 0) | (n_frames < 1000):
-                try:
-                    x = torch.cat((x, torch.tensor(x_list[run][k], dtype=torch.float32, device=device)), 0)
-                except:
-                    print(f'Error in run {run} frame {k}')
-                y = torch.cat((y, torch.tensor(y_list[run][k], dtype=torch.float32, device=device)), 0)
-        time.sleep(0.5)
+    for k in trange(n_ts_frames - 5, ncols=100):
+        if (k % 10 == 0) | (n_frames < 1000):
+            try:
+                x = torch.cat((x, x_ts.frame(k).to_packed().to(device)), 0)
+            except:
+                print(f'error in frame {k}')
+            y = torch.cat((y, torch.tensor(y_raw[k], dtype=torch.float32, device=device)), 0)
+    time.sleep(0.5)
     if torch.isnan(x).any() | torch.isnan(y).any():
         print('Pb isnan')
     vnorm = norm_velocity(x, dimension, device)
@@ -177,19 +163,12 @@ def data_train_particle(config, erase, best_model, device):
     logger.info(f'N epochs: {n_epochs}')
     logger.info(f'initial batch_size: {batch_size}')
 
-    x_plot = torch.tensor(x_list[0][0], dtype=torch.float32, device=device)
+    x_plot = x_ts.frame(0).to_packed().to(device)
     index_particles = get_index_particles(x_plot, n_particle_types, dimension)
     type_list = get_type_list(x_plot, dimension)
     print(f'N particles: {n_particles} {len(torch.unique(type_list))} types')
     logger.info(f'N particles:  {n_particles} {len(torch.unique(type_list))} types')
 
-    if has_ghost_particles:
-        ghosts_particles = Ghost_Particles(config, n_particles, vnorm, device)
-        optimizer_ghost_particles = torch.optim.Adam([ghosts_particles.ghost_pos], lr=1E-4)
-        mask_ghost = np.concatenate((np.ones(n_particles), np.zeros(config.training.n_ghosts)))
-        mask_ghost = np.tile(mask_ghost, batch_size)
-        mask_ghost = np.argwhere(mask_ghost == 1)
-        mask_ghost = mask_ghost[:, 0].astype(int)
     if sim.state_type == 'sequence':
         ind_a = torch.tensor(np.arange(1, n_particles * 100), device=device)
         pos = torch.argwhere(ind_a % 100 != 99).squeeze()
@@ -223,12 +202,6 @@ def data_train_particle(config, erase, best_model, device):
         batch_size = int(get_batch_size(epoch))
         logger.info(f'batch_size: {batch_size}')
 
-        if (epoch == 1) & (has_ghost_particles):
-            mask_ghost = np.concatenate((np.ones(n_particles), np.zeros(config.training.n_ghosts)))
-            mask_ghost = np.tile(mask_ghost, batch_size)
-            mask_ghost = np.argwhere(mask_ghost == 1)
-            mask_ghost = mask_ghost[:, 0].astype(int)
-
         if batch_ratio < 1:
             Niter = int(n_frames * data_augmentation_loop // batch_size / batch_ratio)
         else:
@@ -255,24 +228,14 @@ def data_train_particle(config, erase, best_model, device):
             for batch in range(batch_size):
 
                 run = 0
-                k = time_window + np.random.randint(run_lengths[run] - 1 - time_window - time_step - recursive_loop)
-                x = torch.tensor(x_list[run][k], dtype=torch.float32, device=device).clone().detach()
+                k = time_window + np.random.randint(n_ts_frames - 1 - time_window - time_step - recursive_loop)
+                x = x_ts.frame(k).to_packed().to(device).clone().detach()
+                field_col = 2 + 2 * dimension
+                vel_start = 1 + dimension
+                vel_end = 1 + 2 * dimension
                 if has_field:
                     field = model_f(time=k / n_frames) ** 2
-                    x[:, 6:7] = field
-
-                if has_ghost_particles:
-                    x_ghost = ghosts_particles.get_pos(dataset_id=run, frame=k, bc_pos=bc_pos)
-                    if ghosts_particles.boids:
-                        distance = torch.sum(
-                            bc_dpos(x_ghost[:, None, 1:dimension + 1] - x[None, :, 1:dimension + 1]) ** 2, dim=2)
-                        dist_np = to_numpy(distance)
-                        ind_np = torch.min(distance, axis=1)[1]
-                        x_ghost[:, 3:5] = x[ind_np, 3:5].clone().detach()
-                    x = torch.cat((x, x_ghost), 0)
-                    with torch.no_grad():
-                        model.a[run, n_particles:n_particles + n_ghosts] = model.a[
-                            run, ghosts_particles.embedding_index].clone().detach()  # sample ghost embedding
+                    x[:, field_col:field_col + 1] = field
 
                 edges = edges_radius_blockwise(x, dimension, bc_dpos, min_radius, max_radius, block=4096)
 
@@ -288,18 +251,17 @@ def data_train_particle(config, erase, best_model, device):
                 else:
                     xt = []
                     for t in range(time_window):
-                        x_ = torch.tensor(x_list[run][k - t], dtype=torch.float32, device=device)
+                        x_ = x_ts.frame(k - t).to_packed().to(device)
                         xt.append(x_[:, :])
                     dataset = data.Data(x=xt, edge_index=edges, num_nodes=x.shape[0])
                     dataset_batch.append(dataset)
 
                 if recursive_loop > 0:
-                    y = torch.tensor(x_list[run][k + recursive_loop, :, 1:dimension + 1], dtype=torch.float32, device=device).clone().detach()
+                    y = x_ts.frame(k + recursive_loop).pos.to(device).clone().detach()
                 elif time_step == 1:
-                    y = torch.tensor(y_list[run][k], dtype=torch.float32, device=device).clone().detach() / ynorm
+                    y = torch.tensor(y_raw[k], dtype=torch.float32, device=device).clone().detach() / ynorm
                 elif time_step > 1:
-                    y = torch.tensor(x_list[run][k + time_step, :, 1:dimension + 1], dtype=torch.float32,
-                                     device=device).clone().detach()
+                    y = x_ts.frame(k + time_step).pos.to(device).clone().detach()
 
                 if tc.shared_embedding:
                     run = 1
@@ -323,11 +285,9 @@ def data_train_particle(config, erase, best_model, device):
             batch_loader = DataLoader(dataset_batch, batch_size=batch_size, shuffle=False)
             optimizer.zero_grad()
 
-            if has_ghost_particles:
-                optimizer_ghost_particles.zero_grad()
-
             for batch in batch_loader:
-                pred = model(batch, data_id=data_id, training=True, k=k_batch, has_field=has_field)
+                batch_state = ParticleState.from_packed(batch.x, dimension)
+                pred = model(batch_state, batch.edge_index, data_id=data_id, training=True, k=k_batch, has_field=has_field)
 
             if recursive_loop > 0:
                 for loop in range(recursive_loop):
@@ -335,24 +295,27 @@ def data_train_particle(config, erase, best_model, device):
                     for batch in range(batch_size):
                         x = dataset_batch[batch].x.clone().detach()
 
-                        X1 = x[:, 1:dimension + 1]
-                        V1 = x[:, dimension + 1:2 * dimension + 1]
+                        pos_start = 1
+                        pos_end = 1 + dimension
+                        vel_start = 1 + dimension
+                        vel_end = 1 + 2 * dimension
+                        X1 = x[:, pos_start:pos_end]
+                        V1 = x[:, vel_start:vel_end]
                         if mc.prediction == '2nd_derivative':
                             V1 += pred[ids_index:ids_index + x.shape[0]] * ynorm * delta_t
                         else:
                             V1 = pred[ids_index:ids_index + x.shape[0]] * ynorm
-                        x[:, 1:dimension + 1] = bc_pos(X1 + V1 * delta_t)
-                        x[:, dimension + 1:2 * dimension + 1] = V1
+                        x[:, pos_start:pos_end] = bc_pos(X1 + V1 * delta_t)
+                        x[:, vel_start:vel_end] = V1
                         dataset_batch[batch].x = x
 
                         ids_index += x.shape[0]
 
                     batch_loader = DataLoader(dataset_batch, batch_size=batch_size, shuffle=False)
                     for batch in batch_loader:
-                        pred = model(batch, data_id=data_id, training=True, k=k_batch)
+                        batch_state = ParticleState.from_packed(batch.x, dimension)
+                        pred = model(batch_state, batch.edge_index, data_id=data_id, training=True, k=k_batch)
 
-            if has_ghost_particles:
-                loss = ((pred[mask_ghost] - y_batch)).norm(2)
             if sim.state_type == 'sequence':
                 loss = (pred - y_batch).norm(2)
                 loss = loss + tc.coeff_model_a * (model.a[run, ind_a + 1] - model.a[run, ind_a]).norm(2)
@@ -383,11 +346,13 @@ def data_train_particle(config, erase, best_model, device):
                 else:
                     loss = (pred - y_batch).norm(2)
             elif time_step > 1:
+                pos_batch = x_batch[:, 1:dimension + 1]
+                vel_batch = x_batch[:, 1 + dimension:1 + 2 * dimension]
                 if mc.prediction == '2nd_derivative':
-                    x_pos_pred = x_batch[:, 1:dimension + 1] + delta_t * time_step * (
-                                x_batch[:, dimension + 1:2 * dimension + 1] + delta_t * time_step * pred * ynorm)
+                    x_pos_pred = pos_batch + delta_t * time_step * (
+                                vel_batch + delta_t * time_step * pred * ynorm)
                 else:
-                    x_pos_pred = x_batch[:, 1:dimension + 1] + delta_t * time_step * pred * ynorm
+                    x_pos_pred = pos_batch + delta_t * time_step * pred * ynorm
 
                 if batch_ratio < 1:
                     loss = loss + (x_pos_pred[ids_batch] - y_batch[ids_batch]).norm(2)
@@ -400,9 +365,6 @@ def data_train_particle(config, erase, best_model, device):
 
             if has_field:
                 optimizer_f.step()
-
-            if has_ghost_particles:
-                optimizer_ghost_particles.step()
 
             total_loss += loss.item()
 
@@ -436,11 +398,6 @@ def data_train_particle(config, erase, best_model, device):
         print(f'Epoch {epoch + 1}, Learning Rate: {scheduler.get_last_lr()[0]}')
         logger.info(f'Epoch {epoch + 1}, Learning Rate: {scheduler.get_last_lr()[0]}')
 
-        if has_ghost_particles:
-            torch.save({'model_state_dict': ghosts_particles.state_dict(),
-                        'optimizer_state_dict': optimizer_ghost_particles.state_dict()},
-                       os.path.join(log_dir, 'models', f'best_ghost_particles_with_{n_runs - 1}_graphs_{epoch}.pt'))
-
         fig = plt.figure(figsize=(22, 5))
         ax = fig.add_subplot(1, 5, 1)
         plt.plot(list_loss, color='k')
@@ -467,7 +424,7 @@ def data_train_particle(config, erase, best_model, device):
                                                                 model_MLP=model.lin_edge, model=model,
                                                                 n_nodes=0,
                                                                 n_particles=n_particles, ynorm=ynorm,
-                                                                type_list=to_numpy(x[:, 1 + 2 * dimension]),
+                                                                type_list=to_numpy(x[:, type_col].long()),
                                                                 cmap=cmap, update_type='NA', device=device)
 
             labels, n_clusters, new_labels = sparsify_cluster(tc.cluster_method, proj_interaction, embedding,
@@ -628,10 +585,17 @@ def data_test_particle(config=None, config_file=None, visualize=False, style='co
     sub_sampling = sim.sub_sampling
     dimension = sim.dimension
     omega = mc.omega
+
+    # packed tensor column indices
+    pos_start = 1
+    pos_end = 1 + dimension
+    vel_start = 1 + dimension
+    vel_end = 1 + 2 * dimension
+    type_col = 1 + 2 * dimension
+    field_col = 2 + 2 * dimension
     do_tracking = tc.do_tracking
     cmap = CustomColorMap(config=config)
 
-    has_ghost_particles = tc.n_ghosts > 0
     has_field = (mc.field_type != '')
     has_state = (sim.state_type != 'discrete')
     has_bounding_box = 'PDE_F' in mc.particle_model_name
@@ -661,34 +625,30 @@ def data_test_particle(config=None, config_file=None, visualize=False, style='co
         index = np.arange(n_particles * n // n_particle_types, n_particles * (n + 1) // n_particle_types)
         first_cell_id_particles.append(index)
 
-    print(f'load data run {run} ...')
-
-    x_list = []
-    y_list = []
+    print(f'load data ...')
 
     if os.path.exists(f'graphs_data/{dataset_name}/x_list_{run}.pt'):
-        x = torch.load(f'graphs_data/{dataset_name}/x_list_{run}.pt', map_location=device)
-        y = torch.load(f'graphs_data/{dataset_name}/y_list_{run}.pt', map_location=device)
-        x_list.append(x)
-        y_list.append(y)
+        x_raw = torch.load(f'graphs_data/{dataset_name}/x_list_{run}.pt', map_location=device)
+        y_raw = torch.load(f'graphs_data/{dataset_name}/y_list_{run}.pt', map_location=device)
+        x_ts = ParticleTimeSeries.from_packed(x_raw, dimension)
+        # mutable packed copy for rollout write-back (time_window)
+        x_packed = x_raw.clone().to(device)
         ynorm = torch.load(f'{log_dir}/ynorm.pt', map_location=device, weights_only=True)
         vnorm = torch.load(f'{log_dir}/vnorm.pt', map_location=device, weights_only=True)
         if vnorm == 0:
             vnorm = ynorm
-
     else:
-
-        x = np.load(f'graphs_data/{dataset_name}/x_list_{run}.npy')
-        x = torch.tensor(x, dtype=torch.float32, device=device)
-        y = np.load(f'graphs_data/{dataset_name}/y_list_{run}.npy')
-        y = torch.tensor(y, dtype=torch.float32, device=device)
-        x_list.append(x)
-        y_list.append(y)
-        x = x_list[0][0].clone().detach()
+        x_ts = load_simulation_data(f'graphs_data/{dataset_name}/x_list_{run}', dimension).to(device)
+        y_raw_np = load_raw_array(f'graphs_data/{dataset_name}/y_list_{run}')
+        y_raw = torch.tensor(y_raw_np, dtype=torch.float32, device=device)
+        # mutable packed copy for rollout write-back (time_window)
+        # reconstruct (T, N, C) packed tensor from timeseries fields
+        x_packed = torch.stack([x_ts.frame(t).to_packed() for t in range(x_ts.n_frames)])
+        x = x_ts.frame(0).to_packed()
         if ('PDE_MLPs' not in mc.particle_model_name) & ('PDE_F' not in mc.particle_model_name) & ('PDE_M' not in mc.particle_model_name):
             n_particles = int(x.shape[0] / ratio)
             config.simulation.n_particles = n_particles
-        n_frames = len(x_list[0])
+        n_frames = x_ts.n_frames
         index_particles = get_index_particles(x, n_particle_types, dimension)
         if n_particle_types > 1000:
             index_particles = []
@@ -702,12 +662,12 @@ def data_test_particle(config=None, config_file=None, visualize=False, style='co
             vnorm = ynorm
 
     if do_tracking | has_state:
-        for k in range(len(x_list[0])):
-            type = x_list[0][k][:, 2 * dimension + 1]
+        for k in range(x_ts.n_frames):
+            ptype = x_ts.frame(k).particle_type.to(device)
             if k == 0:
-                type_list = type
+                type_list = ptype
             else:
-                type_list = torch.concatenate((type_list, type))
+                type_list = torch.concatenate((type_list, ptype))
         n_particles_max = len(type_list) + 1
         config.simulation.n_particles_max = n_particles_max
 
@@ -723,7 +683,7 @@ def data_test_particle(config=None, config_file=None, visualize=False, style='co
             torch.tensor(np.ones((int(n_particles), model.embedding_dim)), device=device, requires_grad=False,
                          dtype=torch.float32))
         for n in range(n_particles):
-            t = to_numpy(x[n, 5]).astype(int)
+            t = to_numpy(x[n, type_col]).astype(int)
             index = first_cell_id_particles[t][np.random.randint(n_sub_population)]
             with torch.no_grad():
                 model_a_[n] = first_embedding[index].clone().detach()
@@ -733,18 +693,7 @@ def data_test_particle(config=None, config_file=None, visualize=False, style='co
         with torch.no_grad():
             for n in range(model.a.shape[0]):
                 model.a[n] = model_a_
-    if has_ghost_particles:
-        model_ghost = Ghost_Particles(config, n_particles, vnorm, device)
-        net_ghost = f"{log_dir}/models/best_ghost_particles_with_{n_runs - 1}_graphs_20.pt"
-        state_dict = torch.load(net_ghost, map_location=device)
-        model_ghost.load_state_dict(state_dict['model_state_dict'])
-        model_ghost.eval()
-        x_removed_list = torch.load(f'graphs_data/{dataset_name}/x_removed_list_0.pt', map_location=device)
-        mask_ghost = np.concatenate((np.ones(n_particles), np.zeros(config.training.n_ghosts)))
-        mask_ghost = np.argwhere(mask_ghost == 1)
-        mask_ghost = mask_ghost[:, 0].astype(int)
-
-    # Create model and load weights
+    # create model and load weights
     model, bc_pos, bc_dpos = choose_training_model(config, device)
     model.ynorm = ynorm
     model.vnorm = vnorm
@@ -819,7 +768,7 @@ def data_test_particle(config=None, config_file=None, visualize=False, style='co
 
     start_it = 0
 
-    x = x_list[0][start_it].clone().detach()
+    x = x_ts.frame(start_it).to_packed()
     n_particles = x.shape[0]
     x_inference_list = []
 
@@ -829,10 +778,10 @@ def data_test_particle(config=None, config_file=None, visualize=False, style='co
                                memory_percentage_threshold=0.6)
 
         if it < n_frames - 4:
-            x0 = x_list[0][it].clone().detach()
-            x0_next = x_list[0][(it + time_step)].clone().detach()
+            x0 = x_ts.frame(it).to_packed()
+            x0_next = x_ts.frame(it + time_step).to_packed()
             if not (mc.particle_model_name == 'PDE_R'):
-                y0 = y_list[0][it].clone().detach()
+                y0 = y_raw[it].clone().detach()
 
         if do_tracking:
             x = x0.clone().detach()
@@ -840,17 +789,17 @@ def data_test_particle(config=None, config_file=None, visualize=False, style='co
         # error calculations
         if has_bounding_box:
             rmserr = torch.sqrt(
-                torch.mean(torch.sum(bc_dpos(x[:, 1:dimension + 1] - x0[:, 1:dimension + 1]) ** 2, axis=1)))
+                torch.mean(torch.sum(bc_dpos(x[:, pos_start:pos_end] - x0[:, pos_start:pos_end]) ** 2, axis=1)))
         else:
             if (do_tracking) | (x.shape[0] != x0.shape[0]):
                 rmserr = torch.zeros(1, device=device)
             else:
                 rmserr = torch.sqrt(
-                    torch.mean(torch.sum(bc_dpos(x[:, 1:dimension + 1] - x0[:, 1:dimension + 1]) ** 2, axis=1)))
+                    torch.mean(torch.sum(bc_dpos(x[:, pos_start:pos_end] - x0[:, pos_start:pos_end]) ** 2, axis=1)))
             if x.shape[0] > 5000:
-                geomloss = gloss(x[0:5000, 1:3], x0[0:5000, 1:3])
+                geomloss = gloss(x[0:5000, pos_start:pos_end], x0[0:5000, pos_start:pos_end])
             else:
-                geomloss = gloss(x[:, 1:3], x0[:, 1:3])
+                geomloss = gloss(x[:, pos_start:pos_end], x0[:, pos_start:pos_end])
             geomloss_list.append(geomloss.item())
         rmserr_list.append(rmserr.item())
 
@@ -861,38 +810,31 @@ def data_test_particle(config=None, config_file=None, visualize=False, style='co
 
         # update calculations
         with torch.no_grad():
-            if has_ghost_particles:
-                x_ = x
-                x_ghost = model_ghost.get_pos(dataset_id=run, frame=it, bc_pos=bc_pos)
-                x_ = torch.cat((x_, x_ghost), 0)
-            # compute connectivity and prediction
 
-            distance = torch.sum(bc_dpos(x[:, None, 1:dimension + 1] - x[None, :, 1:dimension + 1]) ** 2, dim=2)
+            distance = torch.sum(bc_dpos(x[:, None, pos_start:pos_end] - x[None, :, pos_start:pos_end]) ** 2, dim=2)
             adj_t = ((distance < max_radius ** 2) & (distance > min_radius ** 2)).float() * 1
             edge_index = adj_t.nonzero().t().contiguous()
 
             if has_field:
                 field = model_f(time=it / n_frames) ** 2
-                x[:, 6:7] = field
+                x[:, field_col:field_col + 1] = field
 
             if time_window > 0:
                 xt = []
                 for t in range(time_window):
-                    x_ = x_list[0][it - t].clone().detach()
+                    x_ = x_packed[it - t].clone().detach()
                     xt.append(x_[:, :])
                 dataset = data.Data(x=xt, edge_index=edge_index)
             else:
-                dataset = data.Data(x=x, pos=x[:, 1:3], edge_index=edge_index)
+                dataset = data.Data(x=x, pos=x[:, pos_start:pos_end], edge_index=edge_index)
 
             if 'test_simulation' in test_mode:
                 y = y0 / ynorm
                 pred = y
             else:
-                pred = model(dataset, data_id=data_id, training=False, has_field=has_field, k=it)
+                test_state = ParticleState.from_packed(dataset.x, dimension)
+                pred = model(test_state, dataset.edge_index, data_id=data_id, training=False, has_field=has_field, k=it)
                 y = pred
-
-            if has_ghost_particles:
-                y = y[mask_ghost]
 
             if sub_sampling > 1:
                 # predict position, does not work with rotation_augmentation
@@ -900,19 +842,19 @@ def data_test_particle(config=None, config_file=None, visualize=False, style='co
                     x_next = bc_pos(y[:, 0:dimension])
                 elif time_step == 2:
                     x_next = bc_pos(y[:, dimension:2 * dimension])
-                x[:, dimension + 1:2 * dimension + 1] = (x_next - x[:, 1:dimension + 1]) / delta_t
-                x[:, 1:dimension + 1] = x_next
-                loss = (x[:, 1:dimension + 1] - x0_next[:, 1:dimension + 1]).norm(2)
+                x[:, vel_start:vel_end] = (x_next - x[:, pos_start:pos_end]) / delta_t
+                x[:, pos_start:pos_end] = x_next
+                loss = (x[:, pos_start:pos_end] - x0_next[:, pos_start:pos_end]).norm(2)
                 pred_err_list.append(to_numpy(torch.sqrt(loss)))
             elif do_tracking:
-                x_pos_next = x0_next[:, 1:dimension + 1].clone().detach()
+                x_pos_next = x0_next[:, pos_start:pos_end].clone().detach()
                 if pred.shape[1] != dimension:
                     pred = torch.cat((pred, torch.zeros(pred.shape[0], 1, device=pred.device)), dim=1)
                 if mc.prediction == '2nd_derivative':
-                    x_pos_pred = (x[:, 1:dimension + 1] + delta_t * time_step * (
-                                x[:, dimension + 1:2 * dimension + 1] + delta_t * time_step * pred * ynorm))
+                    x_pos_pred = (x[:, pos_start:pos_end] + delta_t * time_step * (
+                                x[:, vel_start:vel_end] + delta_t * time_step * pred * ynorm))
                 else:
-                    x_pos_pred = (x[:, 1:dimension + 1] + delta_t * time_step * pred * ynorm)
+                    x_pos_pred = (x[:, pos_start:pos_end] + delta_t * time_step * pred * ynorm)
                 distance = torch.sum(bc_dpos(x_pos_pred[:, None, :] - x_pos_next[None, :, :]) ** 2, dim=2)
                 result = distance.min(dim=1)
                 min_value = result.values
@@ -920,29 +862,29 @@ def data_test_particle(config=None, config_file=None, visualize=False, style='co
                 loss = torch.std(torch.sqrt(min_value))
                 pred_err_list.append(to_numpy(torch.sqrt(loss)))
                 if 'inference' in test_mode:
-                    x[:, dimension + 1:2 * dimension + 1] = pred.clone().detach() / (delta_t * time_step)
+                    x[:, vel_start:vel_end] = pred.clone().detach() / (delta_t * time_step)
 
             else:
                 if mc.prediction == '2nd_derivative':
                     y = y * ynorm * delta_t
-                    x[:n_particles, dimension + 1:2 * dimension + 1] = x[:n_particles, dimension + 1:2 * dimension + 1] + y[:n_particles]  # speed update
+                    x[:n_particles, vel_start:vel_end] = x[:n_particles, vel_start:vel_end] + y[:n_particles]  # speed update
                 else:
                     y = y * vnorm
-                    x[:n_particles, dimension + 1:2 * dimension + 1] = y[:n_particles]
-                x[:, 1:dimension + 1] = bc_pos(
-                    x[:, 1:dimension + 1] + x[:, dimension + 1:2 * dimension + 1] * delta_t)  # position update
+                    x[:n_particles, vel_start:vel_end] = y[:n_particles]
+                x[:, pos_start:pos_end] = bc_pos(
+                    x[:, pos_start:pos_end] + x[:, vel_start:vel_end] * delta_t)  # position update
 
             if 'inference' in test_mode:
                 x_inference_list.append(x)
 
             if (time_window > 1) & ('plot_data' not in test_mode):
-                moving_pos = torch.argwhere(x[:, 5] != 0)
-                x_list[0][it + 1, moving_pos.squeeze(), 1:2 * dimension + 1] = x[moving_pos.squeeze(),
-                                                                               1:2 * dimension + 1].clone().detach()
+                moving_pos = torch.argwhere(x[:, type_col] != 0)
+                x_packed[it + 1, moving_pos.squeeze(), pos_start:vel_end] = x[moving_pos.squeeze(),
+                                                                               pos_start:vel_end].clone().detach()
 
         # vizualization
         if 'plot_data' in test_mode:
-            x = x_list[0][it].clone().detach()
+            x = x_ts.frame(it).to_packed()
 
         if (it % step == 0) & (it >= 0) & visualize:
 
@@ -963,19 +905,19 @@ def data_test_particle(config=None, config_file=None, visualize=False, style='co
 
             if do_tracking:
 
-                plt.scatter(to_numpy(x0[:, 2]), to_numpy(x0[:, 1]), s=10, c='w', alpha=0.5)
+                plt.scatter(to_numpy(x0[:, pos_start + 1]), to_numpy(x0[:, pos_start]), s=10, c='w', alpha=0.5)
                 plt.scatter(to_numpy(x_pos_pred[:, 1]), to_numpy(x_pos_pred[:, 0]), s=10, c='r')
-                x1 = x_list[0][it + time_step].clone().detach()
-                plt.scatter(to_numpy(x1[:, 2]), to_numpy(x1[:, 1]), s=10, c='g')
+                x1 = x_ts.frame(it + time_step).to_packed()
+                plt.scatter(to_numpy(x1[:, pos_start + 1]), to_numpy(x1[:, pos_start]), s=10, c='g')
 
                 plt.xticks([])
                 plt.yticks([])
 
                 if 'zoom' in style:
                     for m in range(x.shape[0]):
-                        plt.arrow(x=to_numpy(x0[m, 2]), y=to_numpy(x0[m, 1]),
-                                  dx=to_numpy(x[m, dimension + 2]) * delta_t,
-                                  dy=to_numpy(x[m, dimension + 1]) * delta_t, head_width=0.004,
+                        plt.arrow(x=to_numpy(x0[m, pos_start + 1]), y=to_numpy(x0[m, pos_start]),
+                                  dx=to_numpy(x[m, vel_start + 1]) * delta_t,
+                                  dy=to_numpy(x[m, vel_start]) * delta_t, head_width=0.004,
                                   length_includes_head=True, color='g')
                     plt.xlim([300, 400])
                     plt.ylim([300, 400])
@@ -989,45 +931,45 @@ def data_test_particle(config=None, config_file=None, visualize=False, style='co
                 index_particles = get_index_particles(x, n_particle_types, dimension)
                 for n in range(n_particle_types):
                     if 'bw' in style:
-                        plt.scatter(x[index_particles[n], 2].detach().cpu().numpy(),
-                                    x[index_particles[n], 1].detach().cpu().numpy(), s=s_p, color='w')
+                        plt.scatter(x[index_particles[n], pos_start + 1].detach().cpu().numpy(),
+                                    x[index_particles[n], pos_start].detach().cpu().numpy(), s=s_p, color='w')
                     else:
-                        plt.scatter(x[index_particles[n], 2].detach().cpu().numpy(),
-                                    x[index_particles[n], 1].detach().cpu().numpy(), s=s_p, color=cmap.color(n))
+                        plt.scatter(x[index_particles[n], pos_start + 1].detach().cpu().numpy(),
+                                    x[index_particles[n], pos_start].detach().cpu().numpy(), s=s_p, color=cmap.color(n))
                 plt.xlim([0, 1])
                 plt.ylim([0, 1])
 
                 if ('field' in style) & has_field:
                     if 'zoom' in style:
-                        plt.scatter(to_numpy(x[:, 2]), to_numpy(x[:, 1]), s=s_p * 50, c=to_numpy(x[:, 6]) * 20,
+                        plt.scatter(to_numpy(x[:, pos_start + 1]), to_numpy(x[:, pos_start]), s=s_p * 50, c=to_numpy(x[:, field_col]) * 20,
                                     alpha=0.5, cmap='viridis', vmin=0, vmax=1.0)
                     else:
-                        plt.scatter(to_numpy(x[:, 2]), to_numpy(x[:, 1]), s=s_p * 2, c=to_numpy(x[:, 6]) * 20,
+                        plt.scatter(to_numpy(x[:, pos_start + 1]), to_numpy(x[:, pos_start]), s=s_p * 2, c=to_numpy(x[:, field_col]) * 20,
                                     alpha=0.5, cmap='viridis', vmin=0, vmax=1.0)
 
                 if particle_of_interest > 1:
 
-                    xc = to_numpy(x[particle_of_interest, 2])
-                    yc = to_numpy(x[particle_of_interest, 1])
+                    xc = to_numpy(x[particle_of_interest, pos_start + 1])
+                    yc = to_numpy(x[particle_of_interest, pos_start])
                     pos = torch.argwhere(edge_index[1, :] == particle_of_interest)
                     pos = pos[:, 0]
                     if 'zoom' in style:
-                        plt.scatter(to_numpy(x[edge_index[0, pos], 2]), to_numpy(x[edge_index[0, pos], 1]), s=s_p * 10,
+                        plt.scatter(to_numpy(x[edge_index[0, pos], pos_start + 1]), to_numpy(x[edge_index[0, pos], pos_start]), s=s_p * 10,
                                     color=marker_color, alpha=1.0)
                     else:
-                        plt.scatter(to_numpy(x[edge_index[0, pos], 2]), to_numpy(x[edge_index[0, pos], 1]), s=s_p * 1,
+                        plt.scatter(to_numpy(x[edge_index[0, pos], pos_start + 1]), to_numpy(x[edge_index[0, pos], pos_start]), s=s_p * 1,
                                     color=marker_color, alpha=1.0)
 
-                    plt.arrow(x=to_numpy(x[particle_of_interest, 2]), y=to_numpy(x[particle_of_interest, 1]),
-                              dx=to_numpy(x[particle_of_interest, 4]) * delta_t * 100,
-                              dy=to_numpy(x[particle_of_interest, 3]) * delta_t * 100, head_width=0.004,
+                    plt.arrow(x=to_numpy(x[particle_of_interest, pos_start + 1]), y=to_numpy(x[particle_of_interest, pos_start]),
+                              dx=to_numpy(x[particle_of_interest, vel_start + 1]) * delta_t * 100,
+                              dy=to_numpy(x[particle_of_interest, vel_start]) * delta_t * 100, head_width=0.004,
                               length_includes_head=True, color='b')
                     if mc.prediction == '2nd_derivative':
-                        plt.arrow(x=to_numpy(x[particle_of_interest, 2]), y=to_numpy(x[particle_of_interest, 1]),
+                        plt.arrow(x=to_numpy(x[particle_of_interest, pos_start + 1]), y=to_numpy(x[particle_of_interest, pos_start]),
                                   dx=to_numpy(y0[particle_of_interest, 1]) * delta_t ** 2 * 100,
                                   dy=to_numpy(y0[particle_of_interest, 0]) * delta_t ** 2 * 100, head_width=0.004,
                                   length_includes_head=True, color='g')
-                        plt.arrow(x=to_numpy(x[particle_of_interest, 2]), y=to_numpy(x[particle_of_interest, 1]),
+                        plt.arrow(x=to_numpy(x[particle_of_interest, pos_start + 1]), y=to_numpy(x[particle_of_interest, pos_start]),
                                   dx=to_numpy(y[particle_of_interest, 1]) * delta_t * 100,
                                   dy=to_numpy(y[particle_of_interest, 0]) * delta_t * 100, head_width=0.004,
                                   length_includes_head=True, color='r')
@@ -1052,17 +994,19 @@ def data_test_particle(config=None, config_file=None, visualize=False, style='co
                 ax.tick_params(axis='both', which='major', pad=15)
             if 'arrow' in style:
                 for m in range(x.shape[0]):
-                    if x[m, 4] != 0:
+                    if x[m, vel_start + 1] != 0:
                         if 'speed' in style:
-                            plt.arrow(x=to_numpy(x[m, 2]), y=to_numpy(x[m, 1]), dx=to_numpy(x[m, 4]) * delta_t * 2,
-                                      dy=to_numpy(x[m, 3]) * delta_t * 2, head_width=0.004, length_includes_head=True,
+                            plt.arrow(x=to_numpy(x[m, pos_start + 1]), y=to_numpy(x[m, pos_start]),
+                                      dx=to_numpy(x[m, vel_start + 1]) * delta_t * 2,
+                                      dy=to_numpy(x[m, vel_start]) * delta_t * 2, head_width=0.004, length_includes_head=True,
                                       color='g')
                         if 'acc_true' in style:
-                            plt.arrow(x=to_numpy(x[m, 2]), y=to_numpy(x[m, 1]), dx=to_numpy(y0[m, 1]) / 5E3,
+                            plt.arrow(x=to_numpy(x[m, pos_start + 1]), y=to_numpy(x[m, pos_start]),
+                                      dx=to_numpy(y0[m, 1]) / 5E3,
                                       dy=to_numpy(y0[m, 0]) / 5E3, head_width=0.004, length_includes_head=True,
                                       color='r')
                         if 'acc_learned' in style:
-                            plt.arrow(x=to_numpy(x[m, 2]), y=to_numpy(x[m, 1]),
+                            plt.arrow(x=to_numpy(x[m, pos_start + 1]), y=to_numpy(x[m, pos_start]),
                                       dx=to_numpy(pred[m, 1] * ynorm.squeeze()) / 5E3,
                                       dy=to_numpy(pred[m, 0] * ynorm.squeeze()) / 5E3, head_width=0.004,
                                       length_includes_head=True, color='r')
@@ -1083,7 +1027,7 @@ def data_test_particle(config=None, config_file=None, visualize=False, style='co
                      6.18e20, 1.10e21, 2.31e21, 1.35e23, 5.62e18, 7.35e22, 1.07e16, 1.48e15, 1.52e21],
                     device=device)
 
-                pos = x[:, 1:dimension + 1]
+                pos = x[:, pos_start:pos_end]
                 distance = torch.sqrt(torch.sum(bc_dpos(pos[:, None, :] - pos[None, 0, :]) ** 2, dim=2))
                 unit_vector = pos / distance
 
@@ -1130,7 +1074,7 @@ def data_test_particle(config=None, config_file=None, visualize=False, style='co
                     fig = plt.figure(figsize=(22, 6))
                 for k in range(model.new_features.shape[1]):
                     ax = fig.add_subplot(1, model.new_features.shape[1], k + 1)
-                    plt.scatter(to_numpy(x[:, 2]), to_numpy(x[:, 1]), c=to_numpy(model.new_features[:, k]), s=5,
+                    plt.scatter(to_numpy(x[:, pos_start + 1]), to_numpy(x[:, pos_start]), c=to_numpy(model.new_features[:, k]), s=5,
                                 cmap='viridis')
                     ax.set_title(f'new_features {k}')
                     plt.xlim([0, 1])
@@ -1141,8 +1085,8 @@ def data_test_particle(config=None, config_file=None, visualize=False, style='co
 
             if 'boundary' in style:
                 fig, ax = fig_init(formatx='%.1f', formaty='%.1f')
-                t = torch.min(x[:, 7:], -1).values
-                plt.scatter(to_numpy(x[:, 2]), to_numpy(x[:, 1]), s=25, c=to_numpy(t), vmin=-1, vmax=1)
+                t = torch.min(x[:, field_col:], -1).values
+                plt.scatter(to_numpy(x[:, pos_start + 1]), to_numpy(x[:, pos_start]), s=25, c=to_numpy(t), vmin=-1, vmax=1)
                 plt.xlim([0, 1])
                 plt.ylim([0, 1])
                 plt.tight_layout()
@@ -1188,8 +1132,6 @@ def data_train_particle_field(config, erase, best_model, device):
     data_augmentation_loop = tc.data_augmentation_loop
     target_batch_size = tc.batch_size
     replace_with_cluster = 'replace' in tc.sparsity
-    has_ghost_particles = tc.n_ghosts > 0
-    n_ghosts = tc.n_ghosts
 
     if tc.small_init_batch_size:
         get_batch_size = increasing_batch_size(target_batch_size)
@@ -1206,41 +1148,27 @@ def data_train_particle_field(config, erase, best_model, device):
     logger.info(f'Graph files N: {n_runs}')
     time.sleep(0.5)
 
-    x_list = []
-    y_list = []
-    edge_p_p_list = []
-    edge_f_p_list = []
+    x_ts = load_simulation_data(f'graphs_data/{dataset_name}/x_list_0', dimension)
+    y_raw_np = load_raw_array(f'graphs_data/{dataset_name}/y_list_0')
+    y_raw = torch.tensor(y_raw_np, dtype=torch.float32, device=device)
+    n_particles_max = x_ts.n_particles
 
-    n_particles_max = 0
-    for run in trange(n_runs, ncols=100):
-        x = np.load(f'graphs_data/{dataset_name}/x_list_{run}.npy')
-        y = np.load(f'graphs_data/{dataset_name}/y_list_{run}.npy')
-        if np.isnan(x).any() | np.isnan(y).any():
-            print('Pb isnan')
-        if x[0].shape[0] > n_particles_max:
-            n_particles_max = x[0].shape[0]
-        x_list.append(x)
-        y_list.append(y)
+    edge_p_p_list = torch.load(f'graphs_data/{dataset_name}/edge_p_p_list0.pt', map_location=device,
+                               weights_only=False)
+    edge_f_p_list = torch.load(f'graphs_data/{dataset_name}/edge_f_p_list0.pt', map_location=device,
+                               weights_only=False)
 
-        edge_p_p = torch.load(f'graphs_data/{dataset_name}/edge_p_p_list{run}.pt', map_location=device,
-                              weights_only=False)
-        edge_f_p = torch.load(f'graphs_data/{dataset_name}/edge_f_p_list{run}.pt', map_location=device,
-                              weights_only=False)
-        edge_p_p_list.append(edge_p_p)
-        edge_f_p_list.append(edge_f_p)
-
-    x = torch.tensor(x_list[0][0], dtype=torch.float32, device=device)
-    y = torch.tensor(y_list[0][0], dtype=torch.float32, device=device)
+    x = x_ts.frame(0).to_packed().to(device)
+    y = y_raw[0].clone().detach()
     time.sleep(0.5)
-    for run in trange(0, n_runs, max(n_runs // 10, 1), ncols=100):
-        for k in range(n_frames - 5):
-            if (k % 10 == 0) | (n_frames < 1000):
-                try:
-                    x = torch.cat((x, torch.tensor(x_list[run][k], dtype=torch.float32, device=device)), 0)
-                except:
-                    print(f'Error in run {run} frame {k}')
-                y = torch.cat((y, torch.tensor(y_list[run][k], dtype=torch.float32, device=device)), 0)
-        time.sleep(0.5)
+    for k in trange(n_frames - 5, ncols=100):
+        if (k % 10 == 0) | (n_frames < 1000):
+            try:
+                x = torch.cat((x, x_ts.frame(k).to_packed().to(device)), 0)
+            except:
+                print(f'error in frame {k}')
+            y = torch.cat((y, y_raw[k].clone().detach()), 0)
+    time.sleep(0.5)
     if torch.isnan(x).any() | torch.isnan(y).any():
         print('Pb isnan')
     vnorm = norm_velocity(x, dimension, device)
@@ -1253,18 +1181,12 @@ def data_train_particle_field(config, erase, best_model, device):
     print(f'vnorm: {to_numpy(vnorm)}, ynorm: {to_numpy(ynorm)}')
     logger.info(f'vnorm ynorm: {to_numpy(vnorm)} {to_numpy(ynorm)}')
 
-    x_mesh_list = []
-    y_mesh_list = []
     time.sleep(0.5)
-    for run in trange(n_runs):
-        x_mesh = torch.load(f'graphs_data/{dataset_name}/x_mesh_list_{run}.pt', map_location=device, weights_only=False)
-        x_mesh_list.append(x_mesh)
-        h = torch.load(f'graphs_data/{dataset_name}/y_mesh_list_{run}.pt', map_location=device, weights_only=False)
-        y_mesh_list.append(h)
-    h = y_mesh_list[0][0].clone().detach()
-    for run in range(n_runs):
-        for k in range(n_frames - 5):
-            h = torch.cat((h, y_mesh_list[run][k].clone().detach()), 0)
+    x_mesh_list = torch.load(f'graphs_data/{dataset_name}/x_mesh_list_0.pt', map_location=device, weights_only=False)
+    y_mesh_list = torch.load(f'graphs_data/{dataset_name}/y_mesh_list_0.pt', map_location=device, weights_only=False)
+    h = y_mesh_list[0].clone().detach()
+    for k in range(n_frames - 5):
+        h = torch.cat((h, y_mesh_list[k].clone().detach()), 0)
     hnorm = torch.std(h)
     torch.save(hnorm, os.path.join(log_dir, 'hnorm.pt'))
     print(f'hnorm: {to_numpy(hnorm)}')
@@ -1310,7 +1232,7 @@ def data_train_particle_field(config, erase, best_model, device):
     logger.info(f'initial batch_size: {batch_size}')
 
     # update variable if particle_dropout, cell_division, etc ...
-    x = torch.tensor(x_list[0][n_frames - 5], dtype=torch.float32, device=device)
+    x = x_ts.frame(n_frames - 5).to_packed().to(device)
     n_particles = x.shape[0]
     index_particles = get_index_particles(x, n_particle_types, dimension)
     type_list = get_type_list(x, dimension)
@@ -1328,20 +1250,6 @@ def data_train_particle_field(config, erase, best_model, device):
         model_f.to(device=device)
         model_f.train()
         optimizer_f = torch.optim.Adam(lr=1e-5, params=model_f.parameters())
-
-    if has_ghost_particles:
-        ghosts_particles = Ghost_Particles(config, n_particles, vnorm, device)
-        optimizer_ghost_particles = torch.optim.Adam(lr=1e-4, params=ghosts_particles.parameters())
-
-        mu = ghosts_particles.mu
-        optimizer_ghost_particles = torch.optim.Adam([mu], lr=1e-4)
-        var = ghosts_particles.var
-        optimizer_ghost_particles.add_param_group({'params': [var], 'lr': 1e-4})
-
-        mask_ghost = np.concatenate((np.ones(n_particles), np.zeros(config.training.n_ghosts)))
-        mask_ghost = np.tile(mask_ghost, batch_size)
-        mask_ghost = np.argwhere(mask_ghost == 1)
-        mask_ghost = mask_ghost[:, 0].astype(int)
 
     print("start training ...")
     print(f'{n_frames * data_augmentation_loop // batch_size} iterations per epoch')
@@ -1366,11 +1274,6 @@ def data_train_particle_field(config, erase, best_model, device):
         f_p_mask = f_p_mask[:, 0]
 
         logger.info(f'batch_size: {batch_size}')
-        if (epoch == 1) & (has_ghost_particles):
-            mask_ghost = np.concatenate((np.ones(n_particles), np.zeros(config.training.n_ghosts)))
-            mask_ghost = np.tile(mask_ghost, batch_size)
-            mask_ghost = np.argwhere(mask_ghost == 1)
-            mask_ghost = mask_ghost[:, 0].astype(int)
 
         total_loss = 0
         Niter = n_frames * data_augmentation_loop // batch_size
@@ -1387,8 +1290,6 @@ def data_train_particle_field(config, erase, best_model, device):
             cos_phi = torch.cos(phi)
             sin_phi = torch.sin(phi)
 
-            run = 0
-
             dataset_batch_p_p = []
             dataset_batch_f_p = []
             time_batch = []
@@ -1396,40 +1297,30 @@ def data_train_particle_field(config, erase, best_model, device):
             for batch in range(batch_size):
 
                 k = np.random.randint(n_frames - 3)
-                x = torch.tensor(x_list[run][k], dtype=torch.float32, device=device)
-                x_mesh = x_mesh_list[run][k].clone().detach()
+                x = x_ts.frame(k).to_packed().to(device)
+                x_mesh = x_mesh_list[k].clone().detach()
 
+                mesh_field_col = 2 + 2 * dimension
+                mesh_vel_start = 1 + dimension
+                mesh_vel_end = 1 + 2 * dimension
                 match mc.field_type:
                     case 'tensor':
-                        x_mesh[:, 6:7] = model.field[run]
+                        x_mesh[:, mesh_field_col:mesh_field_col + 1] = model.field[0]
                     case 'siren':
-                        x_mesh[:, 6:7] = model_f() ** 2
+                        x_mesh[:, mesh_field_col:mesh_field_col + 1] = model_f() ** 2
                     case 'siren_with_time':
-                        x_mesh[:, 6:7] = model_f(time=k / n_frames) ** 2
+                        x_mesh[:, mesh_field_col:mesh_field_col + 1] = model_f(time=k / n_frames) ** 2
                 x_particle_field = torch.concatenate((x_mesh, x), dim=0)
 
-                if has_ghost_particles:
-                    x_ghost = ghosts_particles.get_pos(dataset_id=run, frame=k, bc_pos=bc_pos)
-                    if ghosts_particles.boids:
-                        distance = torch.sum(
-                            bc_dpos(x_ghost[:, None, 1:dimension + 1] - x[None, :, 1:dimension + 1]) ** 2, dim=2)
-                        ind_np = torch.min(distance, axis=1)[1]
-                        x_ghost[:, 3:5] = x[ind_np, 3:5].clone().detach()
-                    x = torch.cat((x, x_ghost), 0)
-
-                    with torch.no_grad():
-                        model.a[run, n_particles:n_particles + n_ghosts] = model.a[
-                            run, ghosts_particles.embedding_index].clone().detach()
-
-                edges = edge_p_p_list[run][k]
+                edges = edge_p_p_list[k]
                 dataset_p_p = data.Data(x=x[:, :], edge_index=edges)
                 dataset_batch_p_p.append(dataset_p_p)
 
-                edges = edge_f_p_list[run][k]
+                edges = edge_f_p_list[k]
                 dataset_f_p = data.Data(x=x_particle_field[:, :], edge_index=edges)
                 dataset_batch_f_p.append(dataset_f_p)
 
-                y = torch.tensor(y_list[run][k], dtype=torch.float32, device=device)
+                y = y_raw[k].clone().detach()
                 if noise_level > 0:
                     y = y * (1 + torch.randn_like(y) * noise_level)
                 y = y / ynorm
@@ -1444,14 +1335,6 @@ def data_train_particle_field(config, erase, best_model, device):
                 else:
                     y_batch = torch.cat((y_batch, y[:, 0:2]), dim=0)
 
-                if has_ghost_particles:
-                    if batch == 0:
-                        var_batch = torch.mean(ghosts_particles.var[run, k], dim=0)
-                        var_batch = var_batch[:, None]
-                    else:
-                        var = torch.mean(ghosts_particles.var[run, k], dim=0)
-                        var_batch = torch.cat((var_batch, var[:, None]), dim=0)
-
             batch_loader_p_p = DataLoader(dataset_batch_p_p, batch_size=batch_size, shuffle=False)
             batch_loader_f_p = DataLoader(dataset_batch_f_p, batch_size=batch_size, shuffle=False)
 
@@ -1459,28 +1342,21 @@ def data_train_particle_field(config, erase, best_model, device):
 
             if has_siren:
                 optimizer_f.zero_grad()
-            if has_ghost_particles:
-                optimizer_ghost_particles.zero_grad()
-
             for batch in batch_loader_f_p:
-                pred_f_p = model(batch, data_id=run, training=True, phi=phi, has_field=True)
+                batch_state = ParticleState.from_packed(batch.x, dimension)
+                pred_f_p = model(batch_state, batch.edge_index, data_id=0, training=True, phi=phi, has_field=True)
             for batch in batch_loader_p_p:
-                pred_p_p = model(batch, data_id=run, training=True, phi=phi, has_field=False)
+                batch_state = ParticleState.from_packed(batch.x, dimension)
+                pred_p_p = model(batch_state, batch.edge_index, data_id=0, training=True, phi=phi, has_field=False)
 
             pred_f_p = pred_f_p[f_p_mask]
 
-            if has_ghost_particles:
-                loss = ((pred_p_p[mask_ghost] + 0 * pred_f_p - y_batch)).norm(2) + var_batch.mean() + model.field.norm(2)
-            else:
-                loss = (pred_p_p + pred_f_p - y_batch).norm(2)
+            loss = (pred_p_p + pred_f_p - y_batch).norm(2)
 
             loss.backward()
             optimizer.step()
             if has_siren:
                 optimizer_f.step()
-            if has_ghost_particles:
-                optimizer_ghost_particles.step()
-
             total_loss += loss.item()
 
             visualize_embedding = True
@@ -1520,11 +1396,6 @@ def data_train_particle_field(config, erase, best_model, device):
         list_loss.append(total_loss / n_particles)
         torch.save(list_loss, os.path.join(log_dir, 'loss.pt'))
 
-        if has_ghost_particles:
-            torch.save({'model_state_dict': ghosts_particles.state_dict(),
-                        'optimizer_state_dict': optimizer_ghost_particles.state_dict()},
-                       os.path.join(log_dir, 'models', f'best_ghost_particles_with_{n_runs - 1}_graphs_{epoch}.pt'))
-
         fig = plt.figure(figsize=(22, 4))
 
         ax = fig.add_subplot(1, 5, 1)
@@ -1550,7 +1421,7 @@ def data_train_particle_field(config, erase, best_model, device):
                                                             model_MLP=model.lin_edge, model=model,
                                                             n_nodes=0,
                                                             n_particles=n_particles, ynorm=ynorm,
-                                                            type_list=to_numpy(x[:, 1 + 2 * dimension]),
+                                                            type_list=to_numpy(x[:, type_col]),
                                                             cmap=cmap, update_type='NA', device=device)
 
         labels, n_clusters, new_labels = sparsify_cluster(tc.cluster_method, proj_interaction, embedding,

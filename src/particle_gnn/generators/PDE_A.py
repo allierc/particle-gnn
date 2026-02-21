@@ -3,6 +3,7 @@ import torch_geometric as pyg
 import torch_geometric.utils as pyg_utils
 import torch
 from particle_gnn.utils import to_numpy
+from particle_gnn.particle_state import ParticleState
 
 class PDE_A(pyg.nn.MessagePassing):
     """Interaction Network as proposed in this paper:
@@ -50,18 +51,15 @@ class PDE_A(pyg.nn.MessagePassing):
 
         return alpha * self.a[id+1, :] + (1 - alpha) * self.a[id, :]
 
-    def forward(self, data=[], has_field=False, k=0):
-        x, edge_index = data.x, data.edge_index
-
+    def forward(self, state: ParticleState, edge_index: torch.Tensor, has_field=False, k=0):
         if has_field:
-            field = x[:,6:7]
+            field = state.field
         else:
-            field = torch.ones_like(x[:,0:1])
+            field = torch.ones(state.n_particles, 1, dtype=state.pos.dtype, device=state.pos.device)
 
         edge_index, _ = pyg_utils.remove_self_loops(edge_index)
-        particle_type = x[:, 1 + 2*self.dimension].long()
-        parameters = self.p[to_numpy(particle_type),:]
-        d_pos = self.propagate(edge_index, pos=x[:, 1:self.dimension+1], particle_type=particle_type[:,None], parameters=parameters.squeeze(), field=field, )
+        parameters = self.p[to_numpy(state.particle_type),:]
+        d_pos = self.propagate(edge_index, pos=state.pos, particle_type=state.particle_type[:,None], parameters=parameters.squeeze(), field=field, )
 
         return d_pos
 
@@ -104,5 +102,4 @@ class PDE_A(pyg.nn.MessagePassing):
             out = r * (p[0] * torch.exp(-r ** (2 * p[1]) / (2 * self.sigma ** 2)) - p[2] * torch.exp(-r ** (2 * p[3]) / (2 * self.sigma ** 2)))
         elif func == 'linear':
             out = p[0] * r + p[1]
-
 

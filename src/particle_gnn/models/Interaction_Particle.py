@@ -5,6 +5,7 @@ import torch_geometric as pyg
 import torch_geometric.utils as pyg_utils
 from particle_gnn.models.MLP import MLP
 from particle_gnn.utils import to_numpy
+from particle_gnn.particle_state import ParticleState
 
 
 class Interaction_Particle(pyg.nn.MessagePassing):
@@ -93,25 +94,24 @@ class Interaction_Particle(pyg.nn.MessagePassing):
         return alpha * self.a[data_id.clone().detach(), id+1, :].squeeze() + (1 - alpha) * self.a[data_id.clone().detach(), id, :].squeeze()
 
 
-    def forward(self, data=[], data_id=[], training=[], has_field=False, k=[]):
+    def forward(self, state: ParticleState, edge_index: torch.Tensor, data_id=[], training=[], has_field=False, k=[]):
 
         self.data_id = data_id
         self.training = training
         self.has_field = has_field
 
-        x, edge_index = data.x, data.edge_index
         if self.remove_self:
             edge_index, _ = pyg_utils.remove_self_loops(edge_index)
 
         if has_field:
-            field = x[:,6:7]
+            field = state.field
         else:
-            field = torch.ones_like(x[:,6:7])
+            field = torch.ones_like(state.field)
 
-        derivatives = torch.zeros_like(x[:, 6:7])
+        derivatives = torch.zeros_like(state.field)
 
-        pos = x[:, 1:self.dimension+1]
-        d_pos = x[:, self.dimension+1:1+2*self.dimension] / self.vnorm
+        pos = state.pos
+        d_pos = state.vel / self.vnorm
         if self.rotation_augmentation & self.training:
             self.phi = torch.randn(1, dtype=torch.float32, requires_grad=False, device=self.device) * np.pi * 2
             self.rotation_matrix = torch.stack([
@@ -125,11 +125,10 @@ class Interaction_Particle(pyg.nn.MessagePassing):
             for n in range(derivatives.shape[1]//2):
                 derivatives[:, n*2:n*2+2] = derivatives[:, n*2:n*2+2] @ self.rotation_matrix
 
+        particle_id = state.index.unsqueeze(-1)
         if self.state == 'sequence':
-            particle_id = x[:, 0:1].long()
             embedding = self.get_interp_a(k, particle_id, self.data_id)
         else:
-            particle_id = x[:, 0:1].long()
             embedding = self.a[self.data_id.clone().detach(), particle_id, :].squeeze()
 
         out = self.propagate(edge_index, particle_id=particle_id, pos=pos, d_pos=d_pos, embedding=embedding, field=field, derivatives=derivatives)

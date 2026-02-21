@@ -6,6 +6,7 @@ import torch_geometric.utils as pyg_utils
 from particle_gnn.models.MLP import MLP
 from particle_gnn.utils import to_numpy
 from particle_gnn.models import Siren_Network
+from particle_gnn.particle_state import ParticleState
 
 
 class Interaction_Particle_Field(pyg.nn.MessagePassing):
@@ -67,10 +68,10 @@ class Interaction_Particle_Field(pyg.nn.MessagePassing):
                          requires_grad=True, dtype=torch.float32))
 
         if self.update_type != 'none':
-            self.lin_update = MLP(input_size=self.output_size + self.embedding_dim + 2, output_size=self.output_size,
+            self.lin_update = MLP(input_size=self.output_size + self.embedding_dim + self.dimension, output_size=self.output_size,
                                   nlayers=self.n_layers_update, hidden_size=self.hidden_dim_update, device=self.device)
 
-    def forward(self, data=[], data_id=[], training=[], phi=[], has_field=False):
+    def forward(self, state: ParticleState, edge_index: torch.Tensor, data_id=[], training=[], phi=[], has_field=False):
 
         self.data_id = data_id
         self.cos_phi = torch.cos(phi)
@@ -78,23 +79,22 @@ class Interaction_Particle_Field(pyg.nn.MessagePassing):
         self.has_field = has_field
         self.training = training
 
-        x, edge_index = data.x, data.edge_index
         edge_index, _ = pyg_utils.remove_self_loops(edge_index)
 
-        pos = x[:, 1:self.dimension+1]
-        d_pos = x[:, self.dimension+1:1+2*self.dimension]
+        pos = state.pos
+        d_pos = state.vel
         if has_field:
-            field = x[:,6:7]
+            field = state.field
         else:
-            field = torch.ones_like(x[:,6:7])
+            field = torch.ones_like(state.field)
 
-        particle_id = x[:, 0:1]
+        particle_id = state.index.unsqueeze(-1)
 
         pred = self.propagate(edge_index, pos=pos, d_pos=d_pos, particle_id=particle_id, field=field)
 
         if self.update_type == 'linear':
             embedding = self.a[self.data_id, particle_id, :]
-            pred = self.lin_update(torch.cat((pred, x[:, 3:5], embedding), dim=-1))
+            pred = self.lin_update(torch.cat((pred, d_pos, embedding), dim=-1))
 
         return pred
 

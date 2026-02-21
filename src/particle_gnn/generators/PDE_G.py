@@ -3,6 +3,7 @@ import torch_geometric as pyg
 import torch_geometric.utils as pyg_utils
 import torch
 from particle_gnn.utils import to_numpy
+from particle_gnn.particle_state import ParticleState
 
 class PDE_G(pyg.nn.MessagePassing):
     """Interaction Network as proposed in this paper:
@@ -21,21 +22,20 @@ class PDE_G(pyg.nn.MessagePassing):
         the acceleration of the particles (dimension 2)
     """
 
-    def __init__(self, aggr_type=[], p=[], clamp=[], pred_limit=[], bc_dpos=[]):
+    def __init__(self, aggr_type=[], p=[], clamp=[], pred_limit=[], bc_dpos=[], dimension=2):
         super(PDE_G, self).__init__(aggr='add')  # "mean" aggregation.
 
         self.p = p
         self.clamp = clamp
         self.pred_limit = pred_limit
         self.bc_dpos = bc_dpos
+        self.dimension = dimension
 
-    def forward(self, data):
-        x, edge_index = data.x, data.edge_index
+    def forward(self, state: ParticleState, edge_index: torch.Tensor):
         edge_index, _ = pyg_utils.remove_self_loops(edge_index)
-        particle_type = to_numpy(x[:, 5])
 
-        mass = self.p[particle_type]
-        dd_pos = self.propagate(edge_index, pos=x[:,1:3], mass=mass[:,None])
+        mass = self.p[to_numpy(state.particle_type)]
+        dd_pos = self.propagate(edge_index, pos=state.pos, mass=mass[:,None])
         return dd_pos
 
     def message(self, pos_i, pos_j, mass_j):

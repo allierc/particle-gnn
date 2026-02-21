@@ -32,6 +32,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from datetime import datetime
 
 from particle_gnn.config import ParticleGNNConfig
@@ -365,6 +366,26 @@ def get_git_branch():
         return 'unknown'
 
 
+def format_timings(timings):
+    """Format phase timings as a compact string."""
+    if not timings:
+        return ""
+    parts = []
+    for phase in ['generate', 'train', 'test']:
+        if phase in timings:
+            secs = timings[phase]
+            if secs >= 60:
+                parts.append(f"{phase}: {secs / 60:.1f}m")
+            else:
+                parts.append(f"{phase}: {secs:.1f}s")
+    total = sum(timings.values())
+    if total >= 60:
+        parts.append(f"total: {total / 60:.1f}m")
+    else:
+        parts.append(f"total: {total:.1f}s")
+    return " | ".join(parts)
+
+
 def append_test_history(history_path, timestamp_str, commit, branch,
                         config_tables, overall_pass, claude_assessment):
     """Append test entry to log/test_history.md."""
@@ -374,13 +395,16 @@ def append_test_history(history_path, timestamp_str, commit, branch,
             f.write("# Particle-GNN Regression Test History\n\n")
 
     verdict = "PASS" if overall_pass else "FAIL"
-    config_names = ', '.join(name for name, _, _ in config_tables)
+    config_names = ', '.join(name for name, _, _, _ in config_tables)
 
     with open(history_path, 'a') as f:
         f.write(f"## {timestamp_str} -- {config_names} -- commit {commit} ({branch}) -- {verdict}\n\n")
-        for name, table, passed in config_tables:
+        for name, table, passed, timings in config_tables:
             status = "PASS" if passed else "FAIL"
+            timing_str = format_timings(timings)
             f.write(f"### {name} ({status})\n\n")
+            if timing_str:
+                f.write(f"**time:** {timing_str}\n\n")
             f.write(table)
             f.write("\n\n")
         if claude_assessment:
@@ -480,6 +504,7 @@ def main():
 
     for config_name in config_list:
         print(f"\033[96mconfig: {config_name}\033[0m")
+        config_timings = {}
 
         # Load config (same pattern as GNN_Main.py)
         config_file, pre_folder = add_pre_folder(config_name)
@@ -506,27 +531,35 @@ def main():
         # Phase 0: Generate
         if not args.skip_generate:
             print(f"\033[93m{config_name}: generate\033[0m")
+            t0 = time.time()
             if args.cluster:
-                # For cluster, generate locally since it's typically fast
                 run_generate(config, device)
             else:
                 run_generate(config, device)
+            config_timings['generate'] = time.time() - t0
+            print(f"  generate: {config_timings['generate']:.1f}s")
 
         # Phase 1: Train
         if not args.skip_train:
             print(f"\033[93m{config_name}: train (n_epochs=1)\033[0m")
+            t0 = time.time()
             if args.cluster:
                 run_training_cluster(config_name, root_dir, log_dir)
             else:
                 run_training_local(config, device)
+            config_timings['train'] = time.time() - t0
+            print(f"  train: {config_timings['train']:.1f}s")
 
         # Phase 2: Test
         if not args.skip_test:
             print(f"\033[93m{config_name}: test\033[0m")
+            t0 = time.time()
             if args.cluster:
                 run_test_cluster(config_name, root_dir, log_dir)
             else:
                 run_test_local(config, device)
+            config_timings['test'] = time.time() - t0
+            print(f"  test: {config_timings['test']:.1f}s")
 
         # Phase 3: Parse metrics
         print(f"\033[93m{config_name}: parse metrics\033[0m")
@@ -536,7 +569,7 @@ def main():
 
         if not current_metrics:
             print(f"\033[91mno metrics found for {config_name}\033[0m")
-            all_config_tables.append((config_name, "(no metrics found)", False))
+            all_config_tables.append((config_name, "(no metrics found)", False, config_timings))
             overall_pass = False
             continue
 
@@ -566,7 +599,7 @@ def main():
             print(table)
             config_pass = True
 
-        all_config_tables.append((config_name, table, config_pass))
+        all_config_tables.append((config_name, table, config_pass, config_timings))
 
     # Save reference if requested
     if args.save_reference:
@@ -578,7 +611,7 @@ def main():
     if not args.no_claude and not args.save_reference:
         print(f"\033[93mclaude assessment\033[0m")
         combined = "\n\n".join(
-            f"### {name}\n{table}" for name, table, _ in all_config_tables
+            f"### {name}\n{table}" for name, table, _, _ in all_config_tables
         )
         claude_assessment = get_claude_assessment(combined, root_dir)
 
@@ -593,9 +626,11 @@ def main():
         )
 
     # Summary
-    for name, _, passed in all_config_tables:
+    for name, _, passed, timings in all_config_tables:
         v = "\033[92mPASS\033[0m" if passed else "\033[91mFAIL\033[0m"
-        print(f"  {name}: {v}")
+        timing_str = format_timings(timings)
+        suffix = f"  ({timing_str})" if timing_str else ""
+        print(f"  {name}: {v}{suffix}")
     verdict = "\033[92mPASS\033[0m" if overall_pass else "\033[91mFAIL\033[0m"
     print(f"overall: {verdict}")
 

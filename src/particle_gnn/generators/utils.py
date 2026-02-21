@@ -51,7 +51,7 @@ def choose_model(config=[], W=[], device=[]):
                 p = np.linspace(0.5, 5, n_particle_types)
                 p = torch.tensor(p, device=device)
             model = PDE_G(aggr_type=aggr_type, p=p, clamp=config.training.clamp,
-                          pred_limit=config.training.pred_limit, bc_dpos=bc_dpos)
+                          pred_limit=config.training.pred_limit, bc_dpos=bc_dpos, dimension=dimension)
         case _:
             raise ValueError(f'Unknown particle model: {particle_model_name}')
 
