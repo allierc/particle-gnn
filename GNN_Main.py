@@ -18,6 +18,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="ParticleGNN")
     parser.add_argument("-o", "--option", nargs="+", help="Option that takes multiple values")
+    parser.add_argument("--n_epochs", type=int, default=None, help="Override n_epochs from config")
 
     args = parser.parse_args()
 
@@ -42,6 +43,9 @@ if __name__ == "__main__":
         config = ParticleGNNConfig.from_yaml(f"{config_root}/{config_file}.yaml")
         config.dataset = pre_folder + config.dataset
         config.config_file = pre_folder + config_file_
+        if args.n_epochs is not None:
+            config.training.n_epochs = args.n_epochs
+            config.training.small_init_batch_size = False
         device = set_device(config.training.device)
 
         print(f"config_file  {config.config_file}")

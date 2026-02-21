@@ -200,7 +200,7 @@ def run_training_cluster(config_name, root_dir, log_dir):
     cluster_home = "/groups/saalfeld/home/allierc"
     cluster_root_dir = f"{cluster_home}/Graph/particle-gnn"
 
-    cluster_train_cmd = f"python GNN_Main.py -o train {config_name}"
+    cluster_train_cmd = f"python GNN_Main.py -o train {config_name} --n_epochs 1"
     cluster_log = f"{cluster_root_dir}/log/{config_name}/{config_name}/cluster_train.log"
 
     cluster_script_path = os.path.join(log_dir, 'cluster_test_train.sh')
