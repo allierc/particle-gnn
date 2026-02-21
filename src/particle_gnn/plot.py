@@ -16,7 +16,7 @@ import torch
 import torch.nn as nn
 import umap
 
-from particle_gnn.figure_style import default_style, dark_style
+from particle_gnn.figure_style import default_style, dark_style, FigureStyle
 from particle_gnn.utils import to_numpy
 
 
@@ -30,7 +30,7 @@ def build_edge_features(rr, embedding, model_name, max_radius):
     Args:
         rr: (n_pts,) tensor of radial distances
         embedding: (N, embed_dim) or (n_pts, embed_dim) tensor
-        model_name: one of PDE_A, PDE_A_bis, PDE_B, PDE_G, PDE_ParticleField_A, PDE_ParticleField_B
+        model_name: one of PDE_A, PDE_B, PDE_G, PDE_ParticleField_A, PDE_ParticleField_B
         max_radius: float
 
     Returns:
@@ -50,14 +50,6 @@ def build_edge_features(rr, embedding, model_name, max_radius):
                     rr_exp.unsqueeze(-1) / max_radius,
                     z.unsqueeze(-1),
                     rr_exp.unsqueeze(-1) / max_radius,
-                    emb_exp,
-                ), dim=-1)
-            case 'PDE_A_bis':
-                return torch.cat((
-                    rr_exp.unsqueeze(-1) / max_radius,
-                    z.unsqueeze(-1),
-                    rr_exp.unsqueeze(-1) / max_radius,
-                    emb_exp,
                     emb_exp,
                 ), dim=-1)
             case 'PDE_B' | 'PDE_ParticleField_B':
@@ -90,9 +82,6 @@ def build_edge_features(rr, embedding, model_name, max_radius):
             case 'PDE_A' | 'PDE_ParticleField_A':
                 return torch.cat((rr[:, None] / max_radius, 0 * rr[:, None],
                                   rr[:, None] / max_radius, embedding), dim=1)
-            case 'PDE_A_bis':
-                return torch.cat((rr[:, None] / max_radius, 0 * rr[:, None],
-                                  rr[:, None] / max_radius, embedding, embedding), dim=1)
             case 'PDE_B' | 'PDE_ParticleField_B':
                 return torch.cat((rr[:, None] / max_radius, 0 * rr[:, None],
                                   torch.abs(rr[:, None]) / max_radius, 0 * rr[:, None], 0 * rr[:, None],
@@ -304,6 +293,7 @@ def analyze_edge_function(rr=[], vizualize=False, config=None, model_MLP=[], mod
 
 def plot_training(config, pred, gt, log_dir, epoch, N, x, index_particles, n_particles, n_particle_types, model, n_nodes, n_node_types, index_nodes, dataset_num, ynorm, cmap, axis, device):
 
+    style = default_style
     simulation_config = config.simulation
     train_config = config.training
     model_config = config.graph_model
@@ -318,65 +308,65 @@ def plot_training(config, pred, gt, log_dir, epoch, N, x, index_particles, n_par
 
     # --- Embedding scatter plot ---
     if n_runs == 3:
-        fig = plt.figure(figsize=(24, 8))
-        ax = fig.add_subplot(1, 3, 1)
+        fig, axes = style.figure(ncols=3, width=24)
+        ax = axes[0]
+        plt.sca(ax)
         embedding = get_embedding(model.a, 1)
-        plt.scatter(embedding[:, 0], embedding[:, 1], s=5, alpha=0.5)
+        ax.scatter(embedding[:, 0], embedding[:, 1], s=5, alpha=0.5)
         embedding = get_embedding(model.a, 2)
-        plt.scatter(embedding[:, 0], embedding[:, 1], s=5, alpha=0.5)
-        plt.xticks([])
-        plt.yticks([])
-        ax = fig.add_subplot(1, 3, 3)
+        ax.scatter(embedding[:, 0], embedding[:, 1], s=5, alpha=0.5)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax = axes[2]
+        plt.sca(ax)
         embedding = get_embedding(model.a, 1)
-        plt.scatter(embedding[:, 0], embedding[:, 1], s=5, alpha=0)
+        ax.scatter(embedding[:, 0], embedding[:, 1], s=5, alpha=0)
         embedding = get_embedding(model.a, 2)
-        plt.scatter(embedding[:, 0], embedding[:, 1], s=5, alpha=0.5)
-        plt.xticks([])
-        plt.yticks([])
-        ax = fig.add_subplot(1, 3, 2)
+        ax.scatter(embedding[:, 0], embedding[:, 1], s=5, alpha=0.5)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax = axes[1]
+        plt.sca(ax)
         embedding = get_embedding(model.a, 1)
-        plt.scatter(embedding[:, 0], embedding[:, 1], s=5, alpha=0.5)
+        ax.scatter(embedding[:, 0], embedding[:, 1], s=5, alpha=0.5)
         embedding = get_embedding(model.a, 2)
-        plt.scatter(embedding[:, 0], embedding[:, 1], s=5, alpha=0)
+        ax.scatter(embedding[:, 0], embedding[:, 1], s=5, alpha=0)
     elif n_runs > 10:
-        fig = plt.figure(figsize=(8, 8))
+        fig, ax = style.figure()
         for m in range(1, n_runs):
             embedding = get_embedding(model.a, m)
-            plt.scatter(embedding[:, 0], embedding[:, 1], s=20, alpha=1)
+            ax.scatter(embedding[:, 0], embedding[:, 1], s=20, alpha=1)
     else:
-        fig = plt.figure(figsize=(8, 8))
+        fig, ax = style.figure()
         if do_tracking:
             embedding = to_numpy(model.a)
             for n in range(n_particle_types):
-                plt.scatter(embedding[index_particles[n], 0], embedding[index_particles[n], 1], color=cmap.color(n), s=1)
+                ax.scatter(embedding[index_particles[n], 0], embedding[index_particles[n], 1], color=cmap.color(n), s=1)
         elif simulation_config.state_type == 'sequence':
             embedding = to_numpy(model.a[0].squeeze())
-            plt.scatter(embedding[:-200, 0], embedding[:-200, 1], color='k', s=0.1)
+            ax.scatter(embedding[:-200, 0], embedding[:-200, 1], color=style.foreground, s=0.1)
         else:
             embedding = get_embedding(model.a, plot_config.data_embedding)
             for n in range(n_particle_types):
-                plt.scatter(embedding[index_particles[n], 0], embedding[index_particles[n], 1], color=cmap.color(n), s=1)
+                ax.scatter(embedding[index_particles[n], 0], embedding[index_particles[n], 1], color=cmap.color(n), s=1)
 
     plt.xticks([])
     plt.yticks([])
     plt.tight_layout()
-    plt.savefig(f"./{log_dir}/tmp_training/embedding/{epoch}_{N}.tif", dpi=87)
-    plt.close()
+    style.savefig(fig, f"./{log_dir}/tmp_training/embedding/{epoch}_{N}.tif")
 
     # --- Pred vs true scatter ---
-    fig = plt.figure(figsize=(8, 8))
-    plt.scatter(to_numpy(gt[:, 0]), to_numpy(pred[:, 0]), c='r', s=1)
-    plt.scatter(to_numpy(gt[:, 1]), to_numpy(pred[:, 1]), c='g', s=1)
-    plt.xlabel('true value', fontsize=14)
-    plt.ylabel('pred value', fontsize=14)
+    fig, ax = style.figure()
+    ax.scatter(to_numpy(gt[:, 0]), to_numpy(pred[:, 0]), c='r', s=1)
+    ax.scatter(to_numpy(gt[:, 1]), to_numpy(pred[:, 1]), c='g', s=1)
+    style.xlabel(ax, 'true value')
+    style.ylabel(ax, 'pred value')
     plt.tight_layout()
-    plt.savefig(f"./{log_dir}/tmp_training/prediction/{epoch}_{N}.tif", dpi=87)
-    plt.close()
+    style.savefig(fig, f"./{log_dir}/tmp_training/prediction/{epoch}_{N}.tif")
 
     # --- Interaction function curves (vectorized) ---
     if n_runs > 10:
-        fig = plt.figure(figsize=(8, 8))
-        ax = fig.add_subplot(1, 1, 1)
+        fig, ax = style.figure()
         rr = torch.tensor(np.linspace(0, simulation_config.max_radius, 1000)).to(device)
 
         # Build all (n, k) pair features: n_runs-1 * n_particles^2 combinations
@@ -434,23 +424,19 @@ def plot_training(config, pred, gt, log_dir, epoch, N, x, index_particles, n_par
         ax.autoscale_view()
 
         plt.tight_layout()
-        plt.savefig(f"./{log_dir}/tmp_training/function/MLP1/function_{epoch}_{N}.tif", dpi=87)
-        plt.close()
+        style.savefig(fig, f"./{log_dir}/tmp_training/function/MLP1/function_{epoch}_{N}.tif")
     else:
         match model_config.particle_model_name:
 
-            case 'PDE_A' | 'PDE_A_bis' | 'PDE_ParticleField_A' | 'PDE_E' | 'PDE_G':
-                fig = plt.figure(figsize=(12, 12))
+            case 'PDE_A' | 'PDE_ParticleField_A' | 'PDE_G':
+                fig, ax = style.figure(height=12)
                 if axis:
-                    ax = fig.add_subplot(1, 1, 1)
                     ax.xaxis.set_major_locator(plt.MaxNLocator(3))
                     ax.yaxis.set_major_locator(plt.MaxNLocator(3))
-                    plt.xticks(fontsize=32)
-                    plt.yticks(fontsize=32)
+                    plt.xticks(fontsize=style.frame_tick_font_size)
+                    plt.yticks(fontsize=style.frame_tick_font_size)
                     plt.xlim([0, simulation_config.max_radius])
                     plt.tight_layout()
-                else:
-                    ax = fig.add_subplot(1, 1, 1)
 
                 rr = torch.tensor(np.linspace(0, simulation_config.max_radius, 1000)).to(device)
 
@@ -473,16 +459,14 @@ def plot_training(config, pred, gt, log_dir, epoch, N, x, index_particles, n_par
                 _plot_curves_fast(ax, rr_np, to_numpy(func_list), type_arr, cmap,
                                   ynorm=ynorm_np, subsample=subsample, alpha=0.25, linewidth=2)
 
-                if (model_config.particle_model_name == 'PDE_G') | (model_config.particle_model_name == 'PDE_E'):
+                if model_config.particle_model_name == 'PDE_G':
                     plt.xlim([0, 0.02])
                 plt.tight_layout()
-                plt.savefig(f"./{log_dir}/tmp_training/function/MLP1/function_{epoch}_{N}.tif", dpi=87)
-                plt.close()
+                style.savefig(fig, f"./{log_dir}/tmp_training/function/MLP1/function_{epoch}_{N}.tif")
 
             case 'PDE_B' | 'PDE_ParticleField_B':
                 max_radius_plot = 0.04
-                fig = plt.figure(figsize=(12, 12))
-                ax = fig.add_subplot(1, 1, 1)
+                fig, ax = style.figure(height=12)
                 rr = torch.tensor(np.linspace(-max_radius_plot, max_radius_plot, 1000)).to(device)
 
                 # Vectorized MLP evaluation
@@ -511,11 +495,10 @@ def plot_training(config, pred, gt, log_dir, epoch, N, x, index_particles, n_par
                 ax.xaxis.set_major_formatter(FormatStrFormatter('%.2f'))
                 fmt = lambda x, pos: '{:.1f}e-5'.format((x) * 1e5, pos)
                 ax.yaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(fmt))
-                plt.xticks(fontsize=32.0)
-                plt.yticks(fontsize=32.0)
+                plt.xticks(fontsize=style.frame_tick_font_size)
+                plt.yticks(fontsize=style.frame_tick_font_size)
                 plt.tight_layout()
-                plt.savefig(f"./{log_dir}/tmp_training/function/MLP1/function_{epoch}_{N}.tif", dpi=170.7)
-                plt.close()
+                style.savefig(fig, f"./{log_dir}/tmp_training/function/MLP1/function_{epoch}_{N}.tif")
 
 
 # --------------------------------------------------------------------------- #
@@ -524,6 +507,7 @@ def plot_training(config, pred, gt, log_dir, epoch, N, x, index_particles, n_par
 
 def plot_training_particle_field(config, has_siren, has_siren_time, model_f, n_frames, model_name, log_dir, epoch, N, x, x_mesh, index_particles, n_neurons, n_neuron_types, model, n_nodes, n_node_types, index_nodes, dataset_num, ynorm, cmap, axis, device):
 
+    style = default_style
     simulation_config = config.simulation
     train_config = config.training
     model_config = config.graph_model
@@ -535,42 +519,37 @@ def plot_training_particle_field(config, has_siren, has_siren_time, model_f, n_f
     n_nodes_per_axis = int(np.sqrt(n_nodes))
 
     # --- Embedding scatter ---
-    fig = plt.figure(figsize=(12, 12))
+    fig, ax = style.figure(height=12)
     if axis:
-        ax = fig.add_subplot(1, 1, 1)
         ax.xaxis.set_major_locator(plt.MaxNLocator(3))
         ax.yaxis.set_major_locator(plt.MaxNLocator(3))
         from matplotlib.ticker import FormatStrFormatter
         ax.xaxis.set_major_formatter(FormatStrFormatter('%.2f'))
         ax.yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
-        plt.xticks(fontsize=32.0)
-        plt.yticks(fontsize=32.0)
+        plt.xticks(fontsize=style.frame_tick_font_size)
+        plt.yticks(fontsize=style.frame_tick_font_size)
     else:
         plt.axis('off')
     embedding = get_embedding(model.a, dataset_num)
     if n_neuron_types > 1000:
-        plt.scatter(embedding[:, 0], embedding[:, 1], c=to_numpy(x[:, type_col]) / n_neurons, s=1, cmap='viridis')
+        ax.scatter(embedding[:, 0], embedding[:, 1], c=to_numpy(x[:, type_col]) / n_neurons, s=1, cmap='viridis')
     else:
         for n in range(n_neuron_types):
-            plt.scatter(embedding[index_particles[n], 0],
-                        embedding[index_particles[n], 1], color=cmap.color(n), s=1)
+            ax.scatter(embedding[index_particles[n], 0],
+                       embedding[index_particles[n], 1], color=cmap.color(n), s=1)
 
     plt.tight_layout()
-    plt.savefig(f"./{log_dir}/tmp_training/embedding/{model_name}_embedding_{epoch}_{N}.tif", dpi=170.7)
-    plt.close()
+    style.savefig(fig, f"./{log_dir}/tmp_training/embedding/{model_name}_embedding_{epoch}_{N}.tif")
 
     # --- Interaction function curves (vectorized) ---
-    fig = plt.figure(figsize=(12, 12))
+    fig, ax = style.figure(height=12)
     if axis:
-        ax = fig.add_subplot(1, 1, 1)
         ax.xaxis.set_major_locator(plt.MaxNLocator(3))
         ax.yaxis.set_major_locator(plt.MaxNLocator(3))
-        plt.xticks(fontsize=32)
-        plt.yticks(fontsize=32)
+        plt.xticks(fontsize=style.frame_tick_font_size)
+        plt.yticks(fontsize=style.frame_tick_font_size)
         plt.xlim([0, simulation_config.max_radius])
         plt.tight_layout()
-    else:
-        ax = fig.add_subplot(1, 1, 1)
 
     match model_config.particle_model_name:
         case 'PDE_ParticleField_A':
@@ -593,8 +572,7 @@ def plot_training_particle_field(config, has_siren, has_siren_time, model_f, n_f
                       ynorm=ynorm_np, subsample=5, alpha=0.25, linewidth=8)
 
     plt.tight_layout()
-    plt.savefig(f"./{log_dir}/tmp_training/function/MLP1/{model_name}_function_{epoch}_{N}.tif", dpi=170.7)
-    plt.close()
+    style.savefig(fig, f"./{log_dir}/tmp_training/function/MLP1/{model_name}_function_{epoch}_{N}.tif")
 
     # --- Siren field visualization ---
     if has_siren:
@@ -614,15 +592,13 @@ def plot_training_particle_field(config, has_siren, has_siren_time, model_f, n_f
             tmp = to_numpy(torch.sqrt(tmp))
             if has_siren_time:
                 tmp = np.rot90(tmp, k=1)
-            fig_ = plt.figure(figsize=(14, 12))
-            axf = fig_.add_subplot(1, 1, 1)
-            plt.imshow(tmp, cmap='grey')
-            plt.colorbar()
-            plt.xticks([])
-            plt.yticks([])
+            fig, axf = style.figure(width=14, height=12)
+            axf.imshow(tmp, cmap='grey')
+            plt.colorbar(axf.images[0], ax=axf)
+            axf.set_xticks([])
+            axf.set_yticks([])
             plt.tight_layout()
-            plt.savefig(f"./{log_dir}/tmp_training/external_input/{model_name}_{epoch}_{N}_{frame}.tif", dpi=80)
-            plt.close()
+            style.savefig(fig, f"./{log_dir}/tmp_training/external_input/{model_name}_{epoch}_{N}_{frame}.tif")
 
 
 # --------------------------------------------------------------------------- #

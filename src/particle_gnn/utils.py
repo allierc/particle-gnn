@@ -353,20 +353,15 @@ def create_log_dir(config=[], erase=True):
     return log_dir, logger
 
 
-def fig_init(fontsize=48, formatx='%.2f', formaty='%.2f'):
-
-    fig = plt.figure(figsize=(12, 12))
-    ax = fig.add_subplot(1, 1, 1)
+def fig_init(fontsize=None, formatx='%.2f', formaty='%.2f'):
+    from particle_gnn.figure_style import default_style
+    fig, ax = default_style.figure(height=12, formatx=formatx, formaty=formaty)
+    fs = fontsize if fontsize is not None else default_style.frame_tick_font_size
     plt.xticks([])
     plt.yticks([])
     ax.tick_params(axis='both', which='major', pad=15)
-    ax.xaxis.set_major_locator(plt.MaxNLocator(3))
-    ax.yaxis.set_major_locator(plt.MaxNLocator(3))
-    ax.xaxis.set_major_formatter(FormatStrFormatter(formatx))
-    ax.yaxis.set_major_formatter(FormatStrFormatter(formaty))
-    plt.xticks(fontsize=fontsize)
-    plt.yticks(fontsize=fontsize)
-
+    plt.xticks(fontsize=fs)
+    plt.yticks(fontsize=fs)
     return fig, ax
 
 

@@ -5,7 +5,7 @@ from tifffile import imread
 from time import sleep
 from particle_gnn.graph_utils import compute_mesh_laplacian
 
-from particle_gnn.generators import PDE_A, PDE_B, PDE_G
+from particle_gnn.models.registry import get_simulator_class
 from particle_gnn.particle_state import ParticleState, FieldState
 from particle_gnn.utils import choose_boundary_values, to_numpy, get_equidistant_points
 
@@ -23,7 +23,9 @@ def choose_model(config=[], W=[], device=[]):
     params = config.simulation.params
     p = torch.tensor(params, dtype=torch.float32, device=device).squeeze()
 
-    # create GNN depending on type specified in config file
+    sim_cls = get_simulator_class(particle_model_name)
+
+    # Per-model parameter setup
     match particle_model_name:
         case 'PDE_A' | 'PDE_ParticleField_A':
             if config.simulation.non_discrete_level > 0:
@@ -43,16 +45,16 @@ def choose_model(config=[], W=[], device=[]):
             p = p if n_particle_types == 1 else torch.squeeze(p)
             func_p = config.simulation.func_params
             embedding_step = config.simulation.n_frames // 100
-            model = PDE_A(aggr_type=aggr_type, p=p, func_p=func_p, sigma=sigma, bc_dpos=bc_dpos,
-                          dimension=dimension, embedding_step=embedding_step)
-        case 'PDE_B':
-            model = PDE_B(aggr_type=aggr_type, p=p, bc_dpos=bc_dpos, dimension=dimension)
+            model = sim_cls(aggr_type=aggr_type, p=p, func_p=func_p, sigma=sigma, bc_dpos=bc_dpos,
+                            dimension=dimension, embedding_step=embedding_step)
+        case 'PDE_B' | 'PDE_ParticleField_B':
+            model = sim_cls(aggr_type=aggr_type, p=p, bc_dpos=bc_dpos, dimension=dimension)
         case 'PDE_G':
             if params[0] == [-1]:
                 p = np.linspace(0.5, 5, n_particle_types)
                 p = torch.tensor(p, device=device)
-            model = PDE_G(aggr_type=aggr_type, p=p, clamp=config.training.clamp,
-                          pred_limit=config.training.pred_limit, bc_dpos=bc_dpos, dimension=dimension)
+            model = sim_cls(aggr_type=aggr_type, p=p, clamp=config.training.clamp,
+                            pred_limit=config.training.pred_limit, bc_dpos=bc_dpos, dimension=dimension)
         case _:
             raise ValueError(f'Unknown particle model: {particle_model_name}')
 

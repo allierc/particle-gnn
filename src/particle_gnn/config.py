@@ -1,6 +1,81 @@
-from typing import Optional, Literal, Annotated
+from enum import Enum
+from typing import Optional, Annotated
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
+
+
+# Python 3.10 compatibility (StrEnum added in 3.11)
+class StrEnum(str, Enum):
+    pass
+
+
+# StrEnum types for config fields
+
+class Boundary(StrEnum):
+    PERIODIC = "periodic"
+    NO = "no"
+    PERIODIC_SPECIAL = "periodic_special"
+    WALL = "wall"
+
+class StateType(StrEnum):
+    DISCRETE = "discrete"
+    SEQUENCE = "sequence"
+    CONTINUOUS = "continuous"
+
+class ConnectivityType(StrEnum):
+    NONE = "none"
+    DISTANCE = "distance"
+    VORONOI = "voronoi"
+    K_NEAREST = "k_nearest"
+
+class Prediction(StrEnum):
+    FIRST_DERIVATIVE = "first_derivative"
+    SECOND_DERIVATIVE = "2nd_derivative"
+
+class Integration(StrEnum):
+    EULER = "Euler"
+    RUNGE_KUTTA = "Runge-Kutta"
+
+class UpdateType(StrEnum):
+    LINEAR = "linear"
+    MLP = "mlp"
+    PRE_MLP = "pre_mlp"
+    TWO_STEPS = "2steps"
+    NONE = "none"
+    NO_POS = "no_pos"
+    GENERIC = "generic"
+    EXCITATION = "excitation"
+    GENERIC_EXCITATION = "generic_excitation"
+    EMBEDDING_MLP = "embedding_MLP"
+    TEST_FIELD = "test_field"
+
+class GhostMethod(StrEnum):
+    NONE = "none"
+    TENSOR = "tensor"
+    MLP = "MLP"
+
+class Sparsity(StrEnum):
+    NONE = "none"
+    REPLACE_EMBEDDING = "replace_embedding"
+    REPLACE_EMBEDDING_FUNCTION = "replace_embedding_function"
+    REPLACE_STATE = "replace_state"
+    REPLACE_TRACK = "replace_track"
+
+class ClusterMethod(StrEnum):
+    KMEANS = "kmeans"
+    KMEANS_AUTO_PLOT = "kmeans_auto_plot"
+    KMEANS_AUTO_EMBEDDING = "kmeans_auto_embedding"
+    DISTANCE_PLOT = "distance_plot"
+    DISTANCE_EMBEDDING = "distance_embedding"
+    DISTANCE_BOTH = "distance_both"
+    INCONSISTENT_PLOT = "inconsistent_plot"
+    INCONSISTENT_EMBEDDING = "inconsistent_embedding"
+    NONE = "none"
+
+class ClusterConnectivity(StrEnum):
+    SINGLE = "single"
+    AVERAGE = "average"
+
 
 # Sub-config schemas for particle-gnn
 
@@ -19,7 +94,7 @@ class SimulationConfig(BaseModel):
     sub_sampling: int = 1
     delta_t: float = 1
 
-    boundary: Literal["periodic", "no", "periodic_special", "wall"] = "periodic"
+    boundary: Boundary = Boundary.PERIODIC
     bounce: bool = False
     bounce_coeff: float = 0.1
     min_radius: float = 0.0
@@ -44,7 +119,7 @@ class SimulationConfig(BaseModel):
     diffusion_coefficients: list[list[float]] = None
 
     angular_sigma: float = 0
-    angular_Bernouilli: list[float] = [-1]
+    angular_bernoulli: list[float] = [-1]
 
     noise_visual_input: float = 0.0
     only_noise_visual_input: float = 0.0
@@ -67,7 +142,7 @@ class SimulationConfig(BaseModel):
     connectivity_file: str = ""
     connectivity_init: list[float] = [-1]
     connectivity_filling_factor: float = 1
-    connectivity_type: Literal["none", "distance", "voronoi", "k_nearest"] = "distance"
+    connectivity_type: ConnectivityType = ConnectivityType.DISTANCE
     connectivity_parameter: float = 1.0
     connectivity_distribution: str = "Gaussian"
     connectivity_distribution_params: float = 1
@@ -85,7 +160,7 @@ class SimulationConfig(BaseModel):
 
     non_discrete_level: float = 0
 
-    state_type: Literal["discrete", "sequence", "continuous"] = "discrete"
+    state_type: StateType = StateType.DISCRETE
     state_params: list[float] = [-1]
 
 
@@ -93,8 +168,8 @@ class GraphModelConfig(BaseModel):
     model_config = ConfigDict(extra="ignore", protected_namespaces=())
 
     particle_model_name: str = ""
-    prediction: Literal["first_derivative", "2nd_derivative"] = "2nd_derivative"
-    integration: Literal["Euler", "Runge-Kutta"] = "Euler"
+    prediction: Prediction = Prediction.SECOND_DERIVATIVE
+    integration: Integration = Integration.EULER
 
     field_type: str = ""
     field_grid: Optional[str] = ""
@@ -111,19 +186,7 @@ class GraphModelConfig(BaseModel):
     embedding_dim: int = 2
     embedding_init: str = ""
 
-    update_type: Literal[
-        "linear",
-        "mlp",
-        "pre_mlp",
-        "2steps",
-        "none",
-        "no_pos",
-        "generic",
-        "excitation",
-        "generic_excitation",
-        "embedding_MLP",
-        "test_field",
-    ] = "none"
+    update_type: UpdateType = UpdateType.NONE
 
     input_size_update: int = 3
     n_layers_update: int = 3
@@ -183,31 +246,15 @@ class TrainingConfig(BaseModel):
 
     particle_dropout: float = 0
     n_ghosts: int = 0
-    ghost_method: Literal["none", "tensor", "MLP"] = "none"
+    ghost_method: GhostMethod = GhostMethod.NONE
     ghost_logvar: float = -12
 
     sparsity_freq: int = 5
-    sparsity: Literal[
-        "none",
-        "replace_embedding",
-        "replace_embedding_function",
-        "replace_state",
-        "replace_track",
-    ] = "none"
+    sparsity: Sparsity = Sparsity.NONE
     fix_cluster_embedding: bool = False
-    cluster_method: Literal[
-        "kmeans",
-        "kmeans_auto_plot",
-        "kmeans_auto_embedding",
-        "distance_plot",
-        "distance_embedding",
-        "distance_both",
-        "inconsistent_plot",
-        "inconsistent_embedding",
-        "none",
-    ] = "distance_plot"
+    cluster_method: ClusterMethod = ClusterMethod.DISTANCE_PLOT
     cluster_distance_threshold: float = 0.01
-    cluster_connectivity: Literal["single", "average"] = "single"
+    cluster_connectivity: ClusterConnectivity = ClusterConnectivity.SINGLE
 
     learning_rate_start: float = 0.001
     learning_rate_embedding_start: float = 0.001
@@ -215,7 +262,7 @@ class TrainingConfig(BaseModel):
 
     learning_rate_end: float = 0.0005
     learning_rate_embedding_end: float = 0.0001
-    learning_rate_NNR: float = 0.0001
+    learning_rate_nnr: float = 0.0001
 
     coeff_loss1: float = 1
 

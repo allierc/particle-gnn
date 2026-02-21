@@ -2,12 +2,10 @@ import glob
 import os
 import time
 
-import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from matplotlib import rc
-from matplotlib.ticker import FormatStrFormatter
 from scipy import stats
 from tqdm import trange
 
@@ -18,6 +16,7 @@ from tifffile import imread
 from particle_gnn.generators.utils import choose_model, init_particlestate, init_mesh
 from particle_gnn.particle_state import ParticleState
 from particle_gnn.zarr_io import ZarrSimulationWriterV3, ZarrArrayWriter
+from particle_gnn.figure_style import default_style, dark_style
 from particle_gnn.utils import (
     to_numpy,
     CustomColorMap,
@@ -89,7 +88,7 @@ def data_generate(
             timer=timer,
         )
 
-    plt.style.use("default")
+    default_style.apply_globally()
 
 
 def data_generate_particle(
@@ -157,8 +156,8 @@ def data_generate_particle(
         inv_particle_dropout_mask = draw[cut:]
         x_removed_list = []
 
-    if sim.angular_Bernouilli != [-1]:
-        b = sim.angular_Bernouilli
+    if sim.angular_bernoulli != [-1]:
+        b = sim.angular_bernoulli
         generative_m = np.array([stats.norm(b[0], b[2]), stats.norm(b[1], b[2])])
 
     run = 0
@@ -248,7 +247,7 @@ def data_generate_particle(
             new_vx = cos_phi * y[:, 0] - sin_phi * y[:, 1]
             new_vy = sin_phi * y[:, 0] + cos_phi * y[:, 1]
             y = torch.cat((new_vx[:, None], new_vy[:, None]), 1).clone().detach()
-        if sim.angular_Bernouilli != [-1]:
+        if sim.angular_bernoulli != [-1]:
             z_i = stats.bernoulli(b[3]).rvs(n_particles)
             phi = np.array([g.rvs() for g in generative_m[z_i]]) / 360 * np.pi * 2
             phi = torch.tensor(phi, device=device, dtype=torch.float32)
@@ -280,8 +279,8 @@ def data_generate_particle(
 
         # output plots
         if visualize & (run == run_vizualized) & (it % step == 0) & (it >= 0):
-            if "black" in style:
-                plt.style.use("dark_background")
+            active_style = dark_style if "black" in style else default_style
+            active_style.apply_globally()
 
             if "latex" in style:
                 plt.rcParams["text.usetex"] = True
@@ -317,27 +316,25 @@ def data_generate_particle(
                     plt.xlim([-2, 2])
                     plt.ylim([-2, 2])
                 if "latex" in style:
-                    plt.xlabel(r"$x$", fontsize=78)
-                    plt.ylabel(r"$y$", fontsize=78)
-                    plt.xticks(fontsize=48.0)
-                    plt.yticks(fontsize=48.0)
+                    plt.xlabel(r"$x$", fontsize=active_style.frame_title_font_size * 1.6)
+                    plt.ylabel(r"$y$", fontsize=active_style.frame_title_font_size * 1.6)
+                    plt.xticks(fontsize=active_style.frame_title_font_size)
+                    plt.yticks(fontsize=active_style.frame_title_font_size)
                 elif "frame" in style:
-                    plt.xlabel(r"$x$", fontsize=78)
-                    plt.ylabel(r"$y$", fontsize=78)
-                    plt.xticks(fontsize=48.0)
-                    plt.yticks(fontsize=48.0)
+                    plt.xlabel(r"$x$", fontsize=active_style.frame_title_font_size * 1.6)
+                    plt.ylabel(r"$y$", fontsize=active_style.frame_title_font_size * 1.6)
+                    plt.xticks(fontsize=active_style.frame_title_font_size)
+                    plt.yticks(fontsize=active_style.frame_title_font_size)
                 else:
                     plt.xticks([])
                     plt.yticks([])
                 plt.tight_layout()
-                plt.savefig(
-                    f"graphs_data/{dataset_name}/Fig/Fig_{run}_{it}.jpg", dpi=170.7
-                )
-                plt.close()
+                active_style.savefig(fig, f"graphs_data/{dataset_name}/Fig/Fig_{run}_{it}.jpg")
+
 
             if "color" in style:
                 if mc.particle_model_name == "PDE_O":
-                    fig = plt.figure(figsize=(12, 12))
+                    fig, ax = active_style.figure(height=12)
                     plt.scatter(
                         x.field[:, 0].detach().cpu().numpy(),
                         x.field[:, 1].detach().cpu().numpy(),
@@ -352,13 +349,9 @@ def data_generate_particle(
                     plt.xticks([])
                     plt.yticks([])
                     plt.tight_layout()
-                    plt.savefig(
-                        f"graphs_data/{dataset_name}/Fig/Lut_Fig_{run}_{it}.jpg",
-                        dpi=170.7,
-                    )
-                    plt.close()
+                    active_style.savefig(fig, f"graphs_data/{dataset_name}/Fig/Lut_Fig_{run}_{it}.jpg")
 
-                    fig = plt.figure(figsize=(12, 12))
+                    fig, ax = active_style.figure(height=12)
                     plt.scatter(
                         to_numpy(x.pos[:, 0]),
                         to_numpy(x.pos[:, 1]),
@@ -371,14 +364,10 @@ def data_generate_particle(
                     plt.xticks([])
                     plt.yticks([])
                     plt.tight_layout()
-                    plt.savefig(
-                        f"graphs_data/{dataset_name}/Fig/Rot_{run}_Fig{it}.jpg",
-                        dpi=170.7,
-                    )
-                    plt.close()
+                    active_style.savefig(fig, f"graphs_data/{dataset_name}/Fig/Rot_{run}_Fig{it}.jpg")
 
                 elif (mc.particle_model_name == "PDE_A") & (dimension == 3):
-                    fig = plt.figure(figsize=(20, 10))
+                    fig, _ = active_style.figure(width=20, height=10)
 
                     # Left panel: 3D view
                     ax1 = fig.add_subplot(121, projection="3d")
@@ -424,11 +413,7 @@ def data_generate_particle(
                     ax2.set_aspect("equal")
 
                     plt.tight_layout()
-                    plt.savefig(
-                        f"graphs_data/{dataset_name}/Fig/Fig_{run}_{it}.jpg",
-                        dpi=170.7,
-                    )
-                    plt.close()
+                    active_style.savefig(fig, f"graphs_data/{dataset_name}/Fig/Fig_{run}_{it}.jpg")
 
                 else:
                     fig, ax = fig_init(formatx="%.1f", formaty="%.1f")
@@ -462,36 +447,26 @@ def data_generate_particle(
                         plt.xlim([-2, 2])
                         plt.ylim([-2, 2])
                     if "latex" in style:
-                        plt.xlabel(r"$x$", fontsize=78)
-                        plt.ylabel(r"$y$", fontsize=78)
-                        plt.xticks(fontsize=48.0)
-                        plt.yticks(fontsize=48.0)
+                        plt.xlabel(r"$x$", fontsize=active_style.frame_title_font_size * 1.6)
+                        plt.ylabel(r"$y$", fontsize=active_style.frame_title_font_size * 1.6)
+                        plt.xticks(fontsize=active_style.frame_title_font_size)
+                        plt.yticks(fontsize=active_style.frame_title_font_size)
                     if "frame" in style:
-                        plt.xlabel("x", fontsize=48)
-                        plt.ylabel("y", fontsize=48)
-                        plt.xticks(fontsize=48.0)
-                        plt.yticks(fontsize=48.0)
+                        plt.xlabel("x", fontsize=active_style.frame_title_font_size)
+                        plt.ylabel("y", fontsize=active_style.frame_title_font_size)
+                        plt.xticks(fontsize=active_style.frame_title_font_size)
+                        plt.yticks(fontsize=active_style.frame_title_font_size)
                         ax.tick_params(axis="both", which="major", pad=15)
-                        plt.text(
-                            0,
-                            1.1,
-                            f"frame {it}",
-                            ha="left",
-                            va="top",
-                            transform=ax.transAxes,
-                            fontsize=48,
-                        )
+                        active_style.annotate(ax, f"frame {it}", (0, 1.1),
+                            ha="left", va="top",
+                            fontsize=active_style.frame_title_font_size)
                     if "no_ticks" in style:
                         plt.xticks([])
                         plt.yticks([])
                     plt.tight_layout()
 
                     num = f"{it:06}"
-                    plt.savefig(
-                        f"graphs_data/{dataset_name}/Fig/Fig_{run}_{num}.tif",
-                        dpi=80,
-                    )
-                    plt.close()
+                    active_style.savefig(fig, f"graphs_data/{dataset_name}/Fig/Fig_{run}_{num}.tif")
 
     if save:
         # finalize zarr writers
@@ -792,13 +767,7 @@ def data_generate_particle_field(
             num = f"{id_fig:06}"
             id_fig += 1
 
-            matplotlib.rcParams["savefig.pad_inches"] = 0
-            fig = plt.figure(figsize=(12, 12))
-            ax = fig.add_subplot(1, 1, 1)
-            ax.xaxis.set_major_locator(plt.MaxNLocator(3))
-            ax.yaxis.set_major_locator(plt.MaxNLocator(3))
-            ax.xaxis.set_major_formatter(FormatStrFormatter("%.1f"))
-            ax.yaxis.set_major_formatter(FormatStrFormatter("%.1f"))
+            fig, ax = default_style.figure(height=12, formatx="%.1f", formaty="%.1f")
             ax.tick_params(axis="both", which="major", pad=15)
             s_p = 20
             for n in range(n_particle_types):
@@ -813,10 +782,7 @@ def data_generate_particle_field(
             plt.xticks([])
             plt.yticks([])
             plt.tight_layout()
-            plt.savefig(
-                f"graphs_data/{dataset_name}/Fig/Fig_{run}_{it}.jpg", dpi=170.7
-            )
-            plt.close()
+            default_style.savefig(fig, f"graphs_data/{dataset_name}/Fig/Fig_{run}_{it}.jpg")
 
     if save:
         # finalize zarr writers

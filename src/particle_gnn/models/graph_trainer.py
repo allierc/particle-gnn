@@ -182,7 +182,7 @@ def data_train_particle(config, erase, best_model, device):
                                 hidden_layers=mc.n_layers_nnr, outermost_linear=True, device=device,
                                 first_omega_0=omega, hidden_omega_0=omega)
         model_f.to(device=device)
-        optimizer_f = torch.optim.Adam(lr=tc.learning_rate_NNR, params=model_f.parameters())
+        optimizer_f = torch.optim.Adam(lr=tc.learning_rate_nnr, params=model_f.parameters())
         model_f.train()
     else:
         has_field = False
@@ -395,28 +395,32 @@ def data_train_particle(config, erase, best_model, device):
         print(f'Epoch {epoch + 1}, Learning Rate: {scheduler.get_last_lr()[0]}')
         logger.info(f'Epoch {epoch + 1}, Learning Rate: {scheduler.get_last_lr()[0]}')
 
-        fig = plt.figure(figsize=(22, 5))
-        ax = fig.add_subplot(1, 5, 1)
-        plt.plot(list_loss, color='k')
+        from particle_gnn.figure_style import default_style as fig_style
+        fig, axes = fig_style.figure(ncols=5, width=22, height=5)
+        ax = axes[0]
+        plt.sca(ax)
+        ax.plot(list_loss, color=fig_style.foreground)
 
-        plt.xlim([0, n_epochs])
-        plt.ylabel('Loss', fontsize=12)
-        plt.xlabel('Epochs', fontsize=12)
+        ax.set_xlim([0, n_epochs])
+        fig_style.ylabel(ax, 'Loss')
+        fig_style.xlabel(ax, 'Epochs')
 
         if ('PDE_T' not in mc.particle_model_name) & (
                 'PDE_MLPs' not in mc.particle_model_name) & (
                 'PDE_F' not in mc.particle_model_name) & ('PDE_M' not in mc.particle_model_name) & (
                 has_bounding_box == False):
 
-            ax = fig.add_subplot(1, 5, 2)
+            ax = axes[1]
+            plt.sca(ax)
             embedding = get_embedding(model.a, 0)
             for n in range(n_particle_types):
-                plt.scatter(embedding[index_particles[n], 0],
-                            embedding[index_particles[n], 1], color=cmap.color(n), s=0.1)
-            plt.xlabel('ai0', fontsize=12)
-            plt.ylabel('ai1', fontsize=12)
+                ax.scatter(embedding[index_particles[n], 0],
+                           embedding[index_particles[n], 1], color=cmap.color(n), s=0.1)
+            fig_style.xlabel(ax, 'ai0')
+            fig_style.ylabel(ax, 'ai1')
 
-            ax = fig.add_subplot(1, 5, 3)
+            ax = axes[2]
+            plt.sca(ax)
             func_list, proj_interaction = analyze_edge_function(rr=[], vizualize=True, config=config,
                                                                 model_MLP=model.lin_edge, model=model,
                                                                 n_nodes=0,
@@ -432,17 +436,19 @@ def data_train_particle(config, erase, best_model, device):
             print(f'accuracy: {np.round(accuracy, 3)}   n_clusters: {n_clusters}')
             logger.info(f'accuracy: {np.round(accuracy, 3)}    n_clusters: {n_clusters}')
 
-            ax = fig.add_subplot(1, 5, 4)
+            ax = axes[3]
+            plt.sca(ax)
             for n in np.unique(new_labels):
                 pos = np.array(np.argwhere(new_labels == n).squeeze().astype(int))
                 if pos.size > 0:
-                    plt.scatter(proj_interaction[pos, 0], proj_interaction[pos, 1], s=5)
-            plt.xlabel('proj 0', fontsize=12)
-            plt.ylabel('proj 1', fontsize=12)
-            plt.text(0, 1.1, f'accuracy: {np.round(accuracy, 3)},  {n_clusters} clusters', ha='left', va='top',
-                     transform=ax.transAxes, fontsize=10)
+                    ax.scatter(proj_interaction[pos, 0], proj_interaction[pos, 1], s=5)
+            fig_style.xlabel(ax, 'proj 0')
+            fig_style.ylabel(ax, 'proj 1')
+            ax.text(0, 1.1, f'accuracy: {np.round(accuracy, 3)},  {n_clusters} clusters', ha='left', va='top',
+                    transform=ax.transAxes, fontsize=fig_style.annotation_font_size)
 
-            ax = fig.add_subplot(1, 5, 5)
+            ax = axes[4]
+            plt.sca(ax)
             model_a_ = model.a[0].clone().detach()
             for n in range(n_clusters):
                 pos = np.argwhere(labels == n).squeeze().astype(int)
@@ -450,14 +456,14 @@ def data_train_particle(config, erase, best_model, device):
                 if pos.size > 0:
                     median_center = model_a_[pos, :]
                     median_center = torch.median(median_center, dim=0).values
-                    plt.scatter(to_numpy(model_a_[pos, 0]), to_numpy(model_a_[pos, 1]), s=1, c='r', alpha=0.25)
+                    ax.scatter(to_numpy(model_a_[pos, 0]), to_numpy(model_a_[pos, 1]), s=1, c='r', alpha=0.25)
                     model_a_[pos, :] = median_center
-                    plt.scatter(to_numpy(model_a_[pos, 0]), to_numpy(model_a_[pos, 1]), s=10, c='k')
+                    ax.scatter(to_numpy(model_a_[pos, 0]), to_numpy(model_a_[pos, 1]), s=10, c=fig_style.foreground)
 
-            plt.xlabel('ai0', fontsize=12)
-            plt.ylabel('ai1', fontsize=12)
-            plt.xticks(fontsize=10.0)
-            plt.yticks(fontsize=10.0)
+            fig_style.xlabel(ax, 'ai0')
+            fig_style.ylabel(ax, 'ai1')
+            ax.tick_params(labelsize=fig_style.annotation_font_size)
+
 
             if (replace_with_cluster) & (epoch % sparsity_freq == sparsity_freq - 1) & (
                     epoch < n_epochs - sparsity_freq):
@@ -473,7 +479,7 @@ def data_train_particle(config, erase, best_model, device):
                     logger.info(f'replace_embedding_function')
                     y_func_list = func_list * 0
 
-                    ax, fig = fig_init()
+                    fig, ax = fig_init()
                     for n in np.unique(new_labels):
                         pos = np.argwhere(new_labels == n)
                         pos = pos.squeeze()
@@ -484,8 +490,7 @@ def data_train_particle(config, erase, best_model, device):
                     plt.xticks([])
                     plt.yticks([])
                     plt.tight_layout()
-                    plt.savefig(f"./{log_dir}/tmp_training/Fig_{epoch}_before training function.tif")
-                    plt.close()
+                    fig_style.savefig(fig, f"./{log_dir}/tmp_training/Fig_{epoch}_before training function.tif")
 
                     lr_embedding = 1E-12
                     optimizer, n_total_params = set_trainable_parameters(model, lr_embedding, lr)
@@ -522,8 +527,7 @@ def data_train_particle(config, erase, best_model, device):
                     logger.info(f'Learning rates: {lr}, {lr_embedding}')
 
         plt.tight_layout()
-        plt.savefig(f"./{log_dir}/tmp_training/Fig_{epoch}.tif")
-        plt.close()
+        fig_style.savefig(fig, f"./{log_dir}/tmp_training/Fig_{epoch}.tif")
 
 
 def data_test(config=None, config_file=None, visualize=False, style='color frame', verbose=True, best_model=20,
@@ -856,22 +860,22 @@ def data_test_particle(config=None, config_file=None, visualize=False, style='co
 
             num = f"{it:06}"
 
+            from particle_gnn.figure_style import default_style as fig_style, dark_style
             if 'latex' in style:
                 plt.rcParams['text.usetex'] = True
                 rc('font', **{'family': 'serif', 'serif': ['Palatino']})
             if 'black' in style:
-                plt.style.use('dark_background')
-                marker_color = 'w'
+                active_style = dark_style
             else:
-                plt.style.use('default')
-                marker_color = 'k'
+                active_style = fig_style
+            active_style.apply_globally()
 
             fig, ax = fig_init(formatx='%.1f', formaty='%.1f')
             ax.tick_params(axis='both', which='major', pad=15)
 
             if do_tracking:
 
-                plt.scatter(to_numpy(x0[:, pos_start + 1]), to_numpy(x0[:, pos_start]), s=10, c='w', alpha=0.5)
+                plt.scatter(to_numpy(x0[:, pos_start + 1]), to_numpy(x0[:, pos_start]), s=10, c=active_style.foreground, alpha=0.5)
                 plt.scatter(to_numpy(x_pos_pred[:, 1]), to_numpy(x_pos_pred[:, 0]), s=10, c='r')
                 x1 = x_ts.frame(it + time_step).to_packed()
                 plt.scatter(to_numpy(x1[:, pos_start + 1]), to_numpy(x1[:, pos_start]), s=10, c='g')
@@ -896,7 +900,7 @@ def data_test_particle(config=None, config_file=None, visualize=False, style='co
                 for n in range(n_particle_types):
                     if 'bw' in style:
                         plt.scatter(x[index_particles[n], pos_start + 1].detach().cpu().numpy(),
-                                    x[index_particles[n], pos_start].detach().cpu().numpy(), s=s_p, color='w')
+                                    x[index_particles[n], pos_start].detach().cpu().numpy(), s=s_p, color=active_style.foreground)
                     else:
                         plt.scatter(x[index_particles[n], pos_start + 1].detach().cpu().numpy(),
                                     x[index_particles[n], pos_start].detach().cpu().numpy(), s=s_p, color=cmap.color(n))
@@ -919,10 +923,10 @@ def data_test_particle(config=None, config_file=None, visualize=False, style='co
                     pos = pos[:, 0]
                     if 'zoom' in style:
                         plt.scatter(to_numpy(x[edge_index[0, pos], pos_start + 1]), to_numpy(x[edge_index[0, pos], pos_start]), s=s_p * 10,
-                                    color=marker_color, alpha=1.0)
+                                    color=active_style.foreground, alpha=1.0)
                     else:
                         plt.scatter(to_numpy(x[edge_index[0, pos], pos_start + 1]), to_numpy(x[edge_index[0, pos], pos_start]), s=s_p * 1,
-                                    color=marker_color, alpha=1.0)
+                                    color=active_style.foreground, alpha=1.0)
 
                     plt.arrow(x=to_numpy(x[particle_of_interest, pos_start + 1]), y=to_numpy(x[particle_of_interest, pos_start]),
                               dx=to_numpy(x[particle_of_interest, vel_start + 1]) * delta_t * 100,
@@ -945,16 +949,16 @@ def data_test_particle(config=None, config_file=None, visualize=False, style='co
                     plt.yticks([])
 
             if 'latex' in style:
-                plt.xlabel(r'$x$', fontsize=78)
-                plt.ylabel(r'$y$', fontsize=78)
-                plt.xticks(fontsize=48.0)
-                plt.yticks(fontsize=48.0)
+                plt.xlabel(r'$x$', fontsize=active_style.frame_title_font_size * 1.6)
+                plt.ylabel(r'$y$', fontsize=active_style.frame_title_font_size * 1.6)
+                plt.xticks(fontsize=active_style.frame_title_font_size)
+                plt.yticks(fontsize=active_style.frame_title_font_size)
             if 'frame' in style:
-                plt.xlabel('x', fontsize=48)
-                plt.ylabel('y', fontsize=48)
-                plt.xticks(fontsize=48.0)
-                plt.yticks(fontsize=48.0)
-                plt.text(0, 1.1, f'   ', ha='left', va='top', transform=ax.transAxes, fontsize=48)
+                plt.xlabel('x', fontsize=active_style.frame_title_font_size)
+                plt.ylabel('y', fontsize=active_style.frame_title_font_size)
+                plt.xticks(fontsize=active_style.frame_title_font_size)
+                plt.yticks(fontsize=active_style.frame_title_font_size)
+                plt.text(0, 1.1, f'   ', ha='left', va='top', transform=ax.transAxes, fontsize=active_style.frame_title_font_size)
                 ax.tick_params(axis='both', which='major', pad=15)
             if 'arrow' in style:
                 mask = to_numpy(x[:, vel_start + 1]) != 0
@@ -979,7 +983,7 @@ def data_test_particle(config=None, config_file=None, visualize=False, style='co
                 plt.xlim([0, 1])
                 plt.ylim([0, 1])
             if 'name' in style:
-                plt.title(f"{os.path.basename(log_dir)}", fontsize=24)
+                plt.title(f"{os.path.basename(log_dir)}", fontsize=active_style.font_size * 1.7)
             if 'no_ticks' in style:
                 plt.xticks([])
                 plt.yticks([])
@@ -987,34 +991,32 @@ def data_test_particle(config=None, config_file=None, visualize=False, style='co
                 plt.xlim([-2, 2])
                 plt.ylim([-2, 2])
             plt.tight_layout()
-            plt.savefig(f"./{log_dir}/tmp_recons/Fig_{config_file}_{run}_{num}.tif", dpi=100)
-            plt.close()
+            plt.tight_layout()
+            active_style.savefig(fig, f"./{log_dir}/tmp_recons/Fig_{config_file}_{run}_{num}.tif")
 
             if ('feature' in style) & ('PDE_MLPs_A' in config.graph_model.particle_model_name):
-                if 'PDE_MLPs_A_bis' in model.model:
-                    fig = plt.figure(figsize=(22, 5))
-                else:
-                    fig = plt.figure(figsize=(22, 6))
-                for k in range(model.new_features.shape[1]):
-                    ax = fig.add_subplot(1, model.new_features.shape[1], k + 1)
-                    plt.scatter(to_numpy(x[:, pos_start + 1]), to_numpy(x[:, pos_start]), c=to_numpy(model.new_features[:, k]), s=5,
-                                cmap='viridis')
-                    ax.set_title(f'new_features {k}')
-                    plt.xlim([0, 1])
-                    plt.ylim([0, 1])
+                n_feat_cols = model.new_features.shape[1]
+                fig_f, axes_f = fig_style.figure(ncols=n_feat_cols, width=22, height=6)
+                if not isinstance(axes_f, np.ndarray):
+                    axes_f = np.array([axes_f])
+                for k in range(n_feat_cols):
+                    ax_f = axes_f[k]
+                    ax_f.scatter(to_numpy(x[:, pos_start + 1]), to_numpy(x[:, pos_start]), c=to_numpy(model.new_features[:, k]), s=5,
+                                 cmap='viridis')
+                    ax_f.set_title(f'new_features {k}')
+                    ax_f.set_xlim([0, 1])
+                    ax_f.set_ylim([0, 1])
                 plt.tight_layout()
-                plt.savefig(f"./{log_dir}/tmp_recons/Features_{config_file}_{run}_{num}.tif", dpi=100)
-                plt.close()
+                fig_style.savefig(fig_f, f"./{log_dir}/tmp_recons/Features_{config_file}_{run}_{num}.tif")
 
             if 'boundary' in style:
-                fig, ax = fig_init(formatx='%.1f', formaty='%.1f')
+                fig_b, ax_b = fig_init(formatx='%.1f', formaty='%.1f')
                 t = torch.min(x[:, field_col:], -1).values
-                plt.scatter(to_numpy(x[:, pos_start + 1]), to_numpy(x[:, pos_start]), s=25, c=to_numpy(t), vmin=-1, vmax=1)
-                plt.xlim([0, 1])
-                plt.ylim([0, 1])
+                ax_b.scatter(to_numpy(x[:, pos_start + 1]), to_numpy(x[:, pos_start]), s=25, c=to_numpy(t), vmin=-1, vmax=1)
+                ax_b.set_xlim([0, 1])
+                ax_b.set_ylim([0, 1])
                 plt.tight_layout()
-                plt.savefig(f"./{log_dir}/tmp_recons/Boundary_{config_file}_{num}.tif", dpi=80)
-                plt.close()
+                fig_style.savefig(fig_b, f"./{log_dir}/tmp_recons/Boundary_{config_file}_{num}.tif")
 
     # Write structured results log
     results = {
@@ -1316,27 +1318,27 @@ def data_train_particle_field(config, erase, best_model, device):
         list_loss.append(total_loss / n_particles)
         torch.save(list_loss, os.path.join(log_dir, 'loss.pt'))
 
-        fig = plt.figure(figsize=(22, 4))
+        from particle_gnn.figure_style import default_style as fig_style
+        fig, axes = fig_style.figure(ncols=5, width=22, height=4)
 
-        ax = fig.add_subplot(1, 5, 1)
-        plt.plot(list_loss, color='k')
-        plt.xlim([0, n_epochs])
-        plt.ylabel('Loss', fontsize=12)
-        plt.xlabel('Epochs', fontsize=12)
+        ax = axes[0]
+        plt.sca(ax)
+        ax.plot(list_loss, color=fig_style.foreground)
+        ax.set_xlim([0, n_epochs])
+        fig_style.ylabel(ax, 'Loss')
+        fig_style.xlabel(ax, 'Epochs')
 
-        ax = fig.add_subplot(1, 5, 2)
+        ax = axes[1]
+        plt.sca(ax)
         embedding = get_embedding(model.a, 0)
         for n in range(n_particle_types):
-            plt.scatter(embedding[index_particles[n], 0],
-                        embedding[index_particles[n], 1], color=cmap.color(n), s=0.1)
-        plt.xlabel('Embedding 0', fontsize=12)
-        plt.ylabel('Embedding 1', fontsize=12)
+            ax.scatter(embedding[index_particles[n], 0],
+                       embedding[index_particles[n], 1], color=cmap.color(n), s=0.1)
+        fig_style.xlabel(ax, 'Embedding 0')
+        fig_style.ylabel(ax, 'Embedding 1')
 
-        plt.tight_layout()
-        plt.savefig(f"./{log_dir}/tmp_training/Fig_{epoch}.tif")
-        plt.close()
-
-        ax = fig.add_subplot(1, 5, 3)
+        ax = axes[2]
+        plt.sca(ax)
         func_list, proj_interaction = analyze_edge_function(rr=[], vizualize=True, config=config,
                                                             model_MLP=model.lin_edge, model=model,
                                                             n_nodes=0,
@@ -1352,17 +1354,19 @@ def data_train_particle_field(config, erase, best_model, device):
         print(f'accuracy: {np.round(accuracy, 3)}   n_clusters: {n_clusters}')
         logger.info(f'accuracy: {np.round(accuracy, 3)}    n_clusters: {n_clusters}')
 
-        ax = fig.add_subplot(1, 5, 4)
+        ax = axes[3]
+        plt.sca(ax)
         for n in np.unique(new_labels):
             pos = np.array(np.argwhere(new_labels == n).squeeze().astype(int))
             if pos.size > 0:
-                plt.scatter(proj_interaction[pos, 0], proj_interaction[pos, 1], s=5)
-        plt.xlabel('proj 0', fontsize=12)
-        plt.ylabel('proj 1', fontsize=12)
-        plt.text(0, 1.1, f'accuracy: {np.round(accuracy, 3)},  {n_clusters} clusters', ha='left', va='top',
-                 transform=ax.transAxes, fontsize=10)
+                ax.scatter(proj_interaction[pos, 0], proj_interaction[pos, 1], s=5)
+        fig_style.xlabel(ax, 'proj 0')
+        fig_style.ylabel(ax, 'proj 1')
+        ax.text(0, 1.1, f'accuracy: {np.round(accuracy, 3)},  {n_clusters} clusters', ha='left', va='top',
+                transform=ax.transAxes, fontsize=fig_style.annotation_font_size)
 
-        ax = fig.add_subplot(1, 5, 5)
+        ax = axes[4]
+        plt.sca(ax)
         model_a_ = model.a[0].clone().detach()
         for n in range(n_clusters):
             pos = np.argwhere(labels == n).squeeze().astype(int)
@@ -1370,13 +1374,12 @@ def data_train_particle_field(config, erase, best_model, device):
             if pos.size > 0:
                 median_center = model_a_[pos, :]
                 median_center = torch.median(median_center, dim=0).values
-                plt.scatter(to_numpy(model_a_[pos, 0]), to_numpy(model_a_[pos, 1]), s=1, c='r', alpha=0.25)
+                ax.scatter(to_numpy(model_a_[pos, 0]), to_numpy(model_a_[pos, 1]), s=1, c='r', alpha=0.25)
                 model_a_[pos, :] = median_center
-                plt.scatter(to_numpy(model_a_[pos, 0]), to_numpy(model_a_[pos, 1]), s=10, c='k')
-        plt.xlabel('ai0', fontsize=12)
-        plt.ylabel('ai1', fontsize=12)
-        plt.xticks(fontsize=10.0)
-        plt.yticks(fontsize=10.0)
+                ax.scatter(to_numpy(model_a_[pos, 0]), to_numpy(model_a_[pos, 1]), s=10, c=fig_style.foreground)
+        fig_style.xlabel(ax, 'ai0')
+        fig_style.ylabel(ax, 'ai1')
+        ax.tick_params(labelsize=fig_style.annotation_font_size)
 
         if (replace_with_cluster) & (epoch % sparsity_freq == sparsity_freq - 1) & (epoch < n_epochs - sparsity_freq):
 
@@ -1390,7 +1393,7 @@ def data_train_particle_field(config, erase, best_model, device):
                 logger.info(f'replace_embedding_function')
                 y_func_list = func_list * 0
 
-                ax, fig = fig_init()
+                fig, ax = fig_init()
                 for n in np.unique(new_labels):
                     pos = np.argwhere(new_labels == n)
                     pos = pos.squeeze()
@@ -1401,7 +1404,7 @@ def data_train_particle_field(config, erase, best_model, device):
                 plt.xticks([])
                 plt.yticks([])
                 plt.tight_layout()
-                plt.savefig(f"./{log_dir}/tmp_training/Fig_{epoch}_before training function.tif")
+                fig_style.savefig(fig, f"./{log_dir}/tmp_training/Fig_{epoch}_before training function.tif")
 
                 lr_embedding = 1E-12
                 optimizer, n_total_params = set_trainable_parameters(model, lr_embedding, lr)

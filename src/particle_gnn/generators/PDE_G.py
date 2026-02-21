@@ -4,7 +4,10 @@ import torch.nn as nn
 from particle_gnn.utils import to_numpy
 from particle_gnn.particle_state import ParticleState
 from particle_gnn.graph_utils import remove_self_loops, scatter_aggregate
+from particle_gnn.models.registry import register_simulator
 
+
+@register_simulator("PDE_G")
 class PDE_G(nn.Module):
     """Interaction Network as proposed in this paper:
     https://proceedings.neurips.cc/paper/2016/hash/3147da8ab4a0437c15ef51a5cc7f2dc4-Abstract.html"""

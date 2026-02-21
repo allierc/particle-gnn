@@ -39,6 +39,10 @@ class FigureStyle:
     annotation_font_size: float = 10.0
     use_latex: bool = False
 
+    # --- large frame fonts (particle/field visualization) ------------------
+    frame_title_font_size: float = 48.0
+    frame_tick_font_size: float = 32.0
+
     # --- geometry ----------------------------------------------------------
     figure_height: float = 8.0          # inches — particle-gnn uses large square figs
     default_aspect: float = 1.0         # square plots are the norm
@@ -60,12 +64,20 @@ class FigureStyle:
     particle_scatter_size: float = 10.0
     embedding_scatter_size: float = 5.0
 
+    # --- dark mode flag (set by singletons) --------------------------------
+    _is_dark: bool = False
+
     # ---------------------------------------------------------------------- #
     #  Public API
     # ---------------------------------------------------------------------- #
 
     def apply_globally(self) -> None:
         """Push style into matplotlib rcParams. Call once at program start."""
+        if self._is_dark:
+            plt.style.use("dark_background")
+        else:
+            plt.style.use("default")
+
         plt.rcParams.update({
             "font.size": self.font_size,
             "axes.titlesize": self.font_size,
@@ -171,10 +183,21 @@ class FigureStyle:
             **kwargs,
         )
 
+    def annotate(self, ax: Axes, text: str, xy: tuple, **kwargs) -> None:
+        """Add text annotation with consistent font."""
+        ax.text(
+            *xy,
+            text,
+            fontsize=kwargs.pop("fontsize", self.annotation_font_size),
+            color=kwargs.pop("color", self.foreground),
+            transform=kwargs.pop("transform", ax.transAxes),
+            **kwargs,
+        )
+
 
 # --------------------------------------------------------------------------- #
 #  Module-level singletons
 # --------------------------------------------------------------------------- #
 
 default_style = FigureStyle()
-dark_style = FigureStyle(foreground="white", background="black")
+dark_style = FigureStyle(foreground="white", background="black", _is_dark=True)

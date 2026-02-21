@@ -2,9 +2,8 @@ import torch
 import numpy as np
 import torch.nn as nn
 
-from particle_gnn.models.Interaction_Particle import Interaction_Particle
-from particle_gnn.models.Interaction_Particle_Field import Interaction_Particle_Field
 from particle_gnn.models.MLP import MLP
+from particle_gnn.models.registry import get_model_class
 from particle_gnn.utils import to_numpy, fig_init, choose_boundary_values
 
 
@@ -51,6 +50,8 @@ class KoLeoLoss(nn.Module):
 def choose_training_model(model_config=None, device=None):
     """Create and return a model based on the configuration.
 
+    Uses the model registry to look up the appropriate class.
+
     Args:
         model_config: Configuration object containing simulation and graph model parameters.
         device: Torch device to place the model on.
@@ -61,26 +62,18 @@ def choose_training_model(model_config=None, device=None):
 
     aggr_type = model_config.graph_model.aggr_type
     dimension = model_config.simulation.dimension
+    name = model_config.graph_model.particle_model_name
 
     bc_pos, bc_dpos = choose_boundary_values(model_config.simulation.boundary)
 
-    match model_config.graph_model.particle_model_name:
-        case 'PDE_ParticleField_A' | 'PDE_ParticleField_B':
-            model = Interaction_Particle_Field(
-                aggr_type=aggr_type,
-                config=model_config,
-                device=device,
-                bc_dpos=bc_dpos,
-                dimension=dimension,
-            )
-        case _:
-            model = Interaction_Particle(
-                aggr_type=aggr_type,
-                config=model_config,
-                device=device,
-                bc_dpos=bc_dpos,
-                dimension=dimension,
-            )
+    model_cls = get_model_class(name)
+    model = model_cls(
+        aggr_type=aggr_type,
+        config=model_config,
+        device=device,
+        bc_dpos=bc_dpos,
+        dimension=dimension,
+    )
     model.edges = []
 
     return model, bc_pos, bc_dpos
@@ -107,7 +100,7 @@ def increasing_batch_size(batch_size):
     return get_batch_size
 
 
-def set_trainable_parameters(model=[], lr_embedding=[], lr=[], lr_update=[], lr_W=[], lr_modulation=[], learning_rate_NNR=[], learning_rate_edge_embedding=[]):
+def set_trainable_parameters(model=[], lr_embedding=[], lr=[], lr_update=[], lr_W=[], lr_modulation=[], learning_rate_nnr=[], learning_rate_edge_embedding=[]):
 
     trainable_params = [param for _, param in model.named_parameters() if param.requires_grad]
     n_total_params = sum(p.numel() for p in trainable_params) + torch.numel(model.a)
@@ -125,7 +118,7 @@ def set_trainable_parameters(model=[], lr_embedding=[], lr=[], lr_update=[], lr_
             elif 'W' in name:
                 optimizer.add_param_group({'params': parameter, 'lr': lr_W})
             elif 'NNR' in name:
-                optimizer.add_param_group({'params': parameter, 'lr': learning_rate_NNR})
+                optimizer.add_param_group({'params': parameter, 'lr': learning_rate_nnr})
             elif 'edges_embedding' in name:
                 optimizer.add_param_group({'params': parameter, 'lr': learning_rate_edge_embedding})
             else:
