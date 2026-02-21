@@ -188,9 +188,9 @@ def run_test_local(config, device):
     """Run test locally (same as GNN_Main.py -o test)."""
     from particle_gnn.models.graph_trainer import data_test
     data_test(
-        config=config, visualize=False, style="color name",
+        config=config, visualize=True, style="color name",
         verbose=False, best_model='best', run=0, test_mode="",
-        sample_embedding=False, step=5, device=device,
+        sample_embedding=False, step=20, device=device,
         particle_of_interest=0,
     )
 
