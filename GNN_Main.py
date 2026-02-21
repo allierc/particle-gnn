@@ -19,6 +19,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="ParticleGNN")
     parser.add_argument("-o", "--option", nargs="+", help="Option that takes multiple values")
     parser.add_argument("--n_epochs", type=int, default=None, help="Override n_epochs from config")
+    parser.add_argument("--erase", action="store_true", help="Erase previous training results")
 
     args = parser.parse_args()
 
@@ -66,7 +67,7 @@ if __name__ == "__main__":
             )
 
         if "train" in task:
-            data_train(config=config, erase=False, best_model=best_model, device=device)
+            data_train(config=config, erase=args.erase, best_model=best_model, device=device)
 
         if "test" in task:
             data_test(

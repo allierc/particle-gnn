@@ -200,7 +200,7 @@ def run_training_cluster(config_name, root_dir, log_dir):
     cluster_home = "/groups/saalfeld/home/allierc"
     cluster_root_dir = f"{cluster_home}/Graph/particle-gnn"
 
-    cluster_train_cmd = f"python GNN_Main.py -o train {config_name} --n_epochs 1"
+    cluster_train_cmd = f"python GNN_Main.py -o train {config_name} --n_epochs 1 --erase"
     cluster_log = f"{cluster_root_dir}/log/{config_name}/{config_name}/cluster_train.log"
 
     cluster_script_path = os.path.join(log_dir, 'cluster_test_train.sh')
@@ -219,7 +219,7 @@ def run_training_cluster(config_name, root_dir, log_dir):
         f"'bash {cluster_script}'\""
     )
 
-    print(f"\033[96msubmitting training to cluster: {ssh_cmd}\033[0m")
+    print(f"\033[96msubmitting training to cluster ({config_name}, gpu_h100, n_epochs=1)\033[0m")
     result = subprocess.run(ssh_cmd, shell=True, capture_output=True, text=True)
 
     if result.returncode != 0:
@@ -264,7 +264,7 @@ def run_test_cluster(config_name, root_dir, log_dir):
         f"'bash {cluster_script}'\""
     )
 
-    print(f"\033[96msubmitting test to cluster: {ssh_cmd}\033[0m")
+    print(f"\033[96msubmitting test to cluster ({config_name}, gpu_h100)\033[0m")
     result = subprocess.run(ssh_cmd, shell=True, capture_output=True, text=True)
 
     if result.returncode != 0:
@@ -569,14 +569,11 @@ def main():
             config_timings['train'] = time.time() - t0
             print(f"  train: {config_timings['train']:.1f}s")
 
-        # Phase 2: Test
+        # Phase 2: Test (always local)
         if not args.skip_test:
             print(f"\033[93m{config_name}: test\033[0m")
             t0 = time.time()
-            if args.cluster:
-                run_test_cluster(config_name, root_dir, log_dir)
-            else:
-                run_test_local(config, device)
+            run_test_local(config, device)
             config_timings['test'] = time.time() - t0
             print(f"  test: {config_timings['test']:.1f}s")
 
