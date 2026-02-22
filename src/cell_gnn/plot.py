@@ -440,6 +440,9 @@ def plot_training(config, pred, gt, log_dir, epoch, N, x, index_cells, n_cells, 
                                               simulation_config.max_radius, device,
                                               dimension=simulation_config.dimension)
 
+                # Plot true psi curves (light gray, behind learned)
+                _plot_true_psi(ax, rr, config, n_cell_types, cmap, device)
+
                 # Plot with LineCollection
                 rr_np = to_numpy(rr)
                 ynorm_np = to_numpy(ynorm)
@@ -469,6 +472,9 @@ def plot_training(config, pred, gt, log_dir, epoch, N, x, index_cells, n_cells, 
                                               config.graph_model.cell_model_name,
                                               max_radius_plot, device,
                                               dimension=simulation_config.dimension)
+
+                # Plot true psi curves (light gray, behind learned)
+                _plot_true_psi(ax, rr, config, n_cell_types, cmap, device)
 
                 # Plot with LineCollection
                 rr_np = to_numpy(rr)
@@ -658,7 +664,7 @@ def _plot_true_psi(ax, rr, config, n_cell_types, cmap, device):
                 psi_n = true_model.psi(rr, p[n])
 
         psi_np = to_numpy(psi_n).flatten()
-        ax.plot(rr_np, psi_np, color='gray', linewidth=4, alpha=0.5)
+        ax.plot(rr_np, psi_np, color='lightgray', linewidth=4, alpha=0.5)
 
 
 # --------------------------------------------------------------------------- #
