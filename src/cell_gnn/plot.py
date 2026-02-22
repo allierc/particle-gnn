@@ -645,6 +645,10 @@ def _plot_true_psi(ax, rr, config, n_cell_types, cmap, device):
         cmap: CustomColorMap instance.
         device: torch device.
     """
+    # Skip for external data — no ground truth function
+    if config.data_folder_name != 'none':
+        return
+
     from cell_gnn.generators.utils import choose_model
 
     try:
