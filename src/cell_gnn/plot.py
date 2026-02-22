@@ -863,15 +863,15 @@ def plot_loss_components(loss_dict, regul_history, log_dir, epoch=None, Niter=No
 
     # --- curves to plot ---
     curves = [
-        ('loss', loss_dict['loss'], 'b', lw * 2, 'loss'),
+        ('loss', loss_dict['loss'], 'b', 1, 'loss'),
     ]
     if regul_history:
         curves += [
-            ('regul_total', regul_history.get('regul_total', []), 'b', lw, 'total regul'),
-            ('edge_weight', regul_history.get('edge_weight', []), 'pink', lw, 'edge weight'),
-            ('edge_diff', regul_history.get('edge_diff', []), 'orange', lw, 'edge monotonicity'),
-            ('edge_norm', regul_history.get('edge_norm', []), 'brown', lw, 'edge norm'),
-            ('continuous', regul_history.get('continuous', []), 'cyan', lw, 'continuous'),
+            ('regul_total', regul_history.get('regul_total', []), 'b', 1, 'total regul'),
+            ('edge_weight', regul_history.get('edge_weight', []), 'pink', 1, 'edge weight'),
+            ('edge_diff', regul_history.get('edge_diff', []), 'orange', 1, 'edge monotonicity'),
+            ('edge_norm', regul_history.get('edge_norm', []), 'brown', 1, 'edge norm'),
+            ('continuous', regul_history.get('continuous', []), 'cyan', 1, 'continuous'),
         ]
 
     for ax, yscale in [(ax1, 'linear'), (ax2, 'log')]:
