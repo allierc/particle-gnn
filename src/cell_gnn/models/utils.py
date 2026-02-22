@@ -196,10 +196,12 @@ class LossRegularizer:
                 embedding_ = model.a[0, n, :] * torch.ones((1000, mc.embedding_dim), device=device)
                 feat0 = build_edge_features(rr=rr, embedding=embedding_,
                                             model_name=mc.cell_model_name,
-                                            max_radius=sim.max_radius)
+                                            max_radius=sim.max_radius,
+                                            dimension=sim.dimension)
                 feat1 = build_edge_features(rr=rr + dr, embedding=embedding_,
                                             model_name=mc.cell_model_name,
-                                            max_radius=sim.max_radius)
+                                            max_radius=sim.max_radius,
+                                            dimension=sim.dimension)
                 msg0 = model.lin_edge(feat0)
                 msg1 = model.lin_edge(feat1)
                 regul_term = torch.relu(msg0 - msg1).norm(2) * tc.coeff_edge_diff
@@ -215,7 +217,8 @@ class LossRegularizer:
                 embedding_ = model.a[0, n, :].unsqueeze(0)
                 feat = build_edge_features(rr=rr_max, embedding=embedding_,
                                            model_name=mc.cell_model_name,
-                                           max_radius=sim.max_radius)
+                                           max_radius=sim.max_radius,
+                                           dimension=sim.dimension)
                 msg_norm = model.lin_edge(feat)
                 regul_term = msg_norm.norm(2) * tc.coeff_edge_norm
                 total_regul = total_regul + regul_term
@@ -231,11 +234,13 @@ class LossRegularizer:
                 embedding_ = model.a[0, n, :] * torch.ones((1000, mc.embedding_dim), device=device)
                 feat1 = build_edge_features(rr=rr + dr, embedding=embedding_,
                                             model_name=mc.cell_model_name,
-                                            max_radius=sim.max_radius)
+                                            max_radius=sim.max_radius,
+                                            dimension=sim.dimension)
                 func1 = model.lin_edge(feat1)
                 feat0 = build_edge_features(rr=rr, embedding=embedding_,
                                             model_name=mc.cell_model_name,
-                                            max_radius=sim.max_radius)
+                                            max_radius=sim.max_radius,
+                                            dimension=sim.dimension)
                 func0 = model.lin_edge(feat0)
                 grad = func1 - func0
                 regul_term = tc.coeff_continuous * grad.norm(2)

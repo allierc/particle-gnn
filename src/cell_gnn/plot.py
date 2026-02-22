@@ -24,7 +24,7 @@ from cell_gnn.utils import to_numpy
 #  Vectorized helpers
 # --------------------------------------------------------------------------- #
 
-def build_edge_features(rr, embedding, model_name, max_radius):
+def build_edge_features(rr, embedding, model_name, max_radius, dimension=2):
     """Build input features for the edge MLP, supporting batched embeddings.
 
     Args:
@@ -32,6 +32,7 @@ def build_edge_features(rr, embedding, model_name, max_radius):
         embedding: (N, embed_dim) or (n_pts, embed_dim) tensor
         model_name: one of arbitrary_ode, boids_ode, gravity_ode, arbitrary_field_ode, boids_field_ode
         max_radius: float
+        dimension: int, spatial dimension (2 or 3)
 
     Returns:
         (N, n_pts, input_dim) or (n_pts, input_dim) tensor of features
@@ -42,60 +43,46 @@ def build_edge_features(rr, embedding, model_name, max_radius):
         n_pts = rr.shape[0]
         rr_exp = rr[None, :].expand(N, n_pts)  # (N, n_pts)
         emb_exp = embedding[:, None, :].expand(N, n_pts, embed_dim)  # (N, n_pts, embed_dim)
-        z = torch.zeros_like(rr_exp)
+
+        # delta_pos: (N, n_pts, dimension) — first component is rr, rest zeros
+        delta_pos = torch.zeros(N, n_pts, dimension, dtype=rr.dtype, device=rr.device)
+        delta_pos[:, :, 0] = rr_exp / max_radius
+        r = rr_exp.unsqueeze(-1) / max_radius  # (N, n_pts, 1)
 
         match model_name:
             case 'arbitrary_ode' | 'arbitrary_field_ode':
-                return torch.cat((
-                    rr_exp.unsqueeze(-1) / max_radius,
-                    z.unsqueeze(-1),
-                    rr_exp.unsqueeze(-1) / max_radius,
-                    emb_exp,
-                ), dim=-1)
+                return torch.cat((delta_pos, r, emb_exp), dim=-1)
             case 'boids_ode' | 'boids_field_ode':
-                return torch.cat((
-                    rr_exp.unsqueeze(-1) / max_radius,
-                    z.unsqueeze(-1),
-                    torch.abs(rr_exp).unsqueeze(-1) / max_radius,
-                    z.unsqueeze(-1),
-                    z.unsqueeze(-1),
-                    z.unsqueeze(-1),
-                    z.unsqueeze(-1),
-                    emb_exp,
-                ), dim=-1)
+                r_abs = torch.abs(rr_exp).unsqueeze(-1) / max_radius
+                vel_zeros = torch.zeros(N, n_pts, dimension * 2, dtype=rr.dtype, device=rr.device)
+                return torch.cat((delta_pos, r_abs, vel_zeros, emb_exp), dim=-1)
             case 'gravity_ode':
-                return torch.cat((
-                    rr_exp.unsqueeze(-1) / max_radius,
-                    z.unsqueeze(-1),
-                    rr_exp.unsqueeze(-1) / max_radius,
-                    z.unsqueeze(-1),
-                    z.unsqueeze(-1),
-                    z.unsqueeze(-1),
-                    z.unsqueeze(-1),
-                    emb_exp,
-                ), dim=-1)
+                vel_zeros = torch.zeros(N, n_pts, dimension * 2, dtype=rr.dtype, device=rr.device)
+                return torch.cat((delta_pos, r, vel_zeros, emb_exp), dim=-1)
             case _:
                 raise ValueError(f'Unknown model name in build_edge_features: {model_name}')
     else:
         # Original non-batched path (embedding is (n_pts, embed_dim))
+        n_pts = rr.shape[0]
+        delta_pos = torch.zeros(n_pts, dimension, dtype=rr.dtype, device=rr.device)
+        delta_pos[:, 0] = rr / max_radius
+        r = rr[:, None] / max_radius
+
         match model_name:
             case 'arbitrary_ode' | 'arbitrary_field_ode':
-                return torch.cat((rr[:, None] / max_radius, 0 * rr[:, None],
-                                  rr[:, None] / max_radius, embedding), dim=1)
+                return torch.cat((delta_pos, r, embedding), dim=1)
             case 'boids_ode' | 'boids_field_ode':
-                return torch.cat((rr[:, None] / max_radius, 0 * rr[:, None],
-                                  torch.abs(rr[:, None]) / max_radius, 0 * rr[:, None], 0 * rr[:, None],
-                                  0 * rr[:, None], 0 * rr[:, None], embedding), dim=1)
+                r_abs = torch.abs(rr[:, None]) / max_radius
+                vel_zeros = torch.zeros(n_pts, dimension * 2, dtype=rr.dtype, device=rr.device)
+                return torch.cat((delta_pos, r_abs, vel_zeros, embedding), dim=1)
             case 'gravity_ode':
-                return torch.cat((rr[:, None] / max_radius, 0 * rr[:, None],
-                                  rr[:, None] / max_radius, 0 * rr[:, None],
-                                  0 * rr[:, None],
-                                  0 * rr[:, None], 0 * rr[:, None], embedding), dim=1)
+                vel_zeros = torch.zeros(n_pts, dimension * 2, dtype=rr.dtype, device=rr.device)
+                return torch.cat((delta_pos, r, vel_zeros, embedding), dim=1)
             case _:
                 raise ValueError(f'Unknown model name in build_edge_features: {model_name}')
 
 
-def _batched_mlp_eval(mlp, embeddings, rr, model_name, max_radius, device, chunk_size=512):
+def _batched_mlp_eval(mlp, embeddings, rr, model_name, max_radius, device, dimension=2, chunk_size=512):
     """Evaluate an MLP for all cells in batched mode.
 
     Args:
@@ -105,6 +92,7 @@ def _batched_mlp_eval(mlp, embeddings, rr, model_name, max_radius, device, chunk
         model_name: str — model name for feature construction
         max_radius: float
         device: torch device
+        dimension: int, spatial dimension (2 or 3)
         chunk_size: number of cells per chunk to avoid OOM
 
     Returns:
@@ -120,7 +108,7 @@ def _batched_mlp_eval(mlp, embeddings, rr, model_name, max_radius, device, chunk
             emb_chunk = embeddings[start:end]  # (chunk, embed_dim)
 
             # Build features: (chunk, n_pts, input_dim)
-            features = build_edge_features(rr, emb_chunk, model_name, max_radius)
+            features = build_edge_features(rr, emb_chunk, model_name, max_radius, dimension=dimension)
             chunk_n = features.shape[0]
 
             # Flatten to (chunk * n_pts, input_dim), run MLP, reshape back
@@ -247,7 +235,8 @@ def analyze_edge_function(rr=[], vizualize=False, config=None, model_MLP=[], mod
         all_embeddings = torch.cat((all_embeddings, b_rep), dim=1)
 
     # Batched MLP evaluation: (N, 1000)
-    func_list = _batched_mlp_eval(model_MLP, all_embeddings, rr, config_model, max_radius, device)
+    func_list = _batched_mlp_eval(model_MLP, all_embeddings, rr, config_model, max_radius, device,
+                                    dimension=dimension)
 
     func_list_ = to_numpy(func_list)
 
@@ -448,7 +437,8 @@ def plot_training(config, pred, gt, log_dir, epoch, N, x, index_cells, n_cells, 
 
                 func_list = _batched_mlp_eval(model.lin_edge, all_embeddings, rr,
                                               config.graph_model.cell_model_name,
-                                              simulation_config.max_radius, device)
+                                              simulation_config.max_radius, device,
+                                              dimension=simulation_config.dimension)
 
                 # Plot with LineCollection
                 rr_np = to_numpy(rr)
@@ -477,7 +467,8 @@ def plot_training(config, pred, gt, log_dir, epoch, N, x, index_cells, n_cells, 
 
                 func_list = _batched_mlp_eval(model.lin_edge, all_embeddings, rr,
                                               config.graph_model.cell_model_name,
-                                              max_radius_plot, device)
+                                              max_radius_plot, device,
+                                              dimension=simulation_config.dimension)
 
                 # Plot with LineCollection
                 rr_np = to_numpy(rr)
@@ -561,7 +552,8 @@ def plot_training_cell_field(config, has_siren, has_siren_time, model_f, n_frame
     all_embeddings = model.a[dataset_num, :n_neurons, :]  # (N, embed_dim)
     func_list = _batched_mlp_eval(model.lin_edge, all_embeddings, rr,
                                   model_config.cell_model_name,
-                                  max_radius, device)
+                                  max_radius, device,
+                                  dimension=simulation_config.dimension)
 
     # Plot with LineCollection
     rr_np = to_numpy(rr)
@@ -616,7 +608,8 @@ def batched_sparsity_mlp_eval(model, rr, n_cells, config, device):
     all_embeddings = model.a[0, :n_cells, :].clone().detach()  # (N, embed_dim)
 
     # Build features: (N, n_pts, input_dim)
-    features = build_edge_features(rr, all_embeddings, mc.cell_model_name, sim.max_radius)
+    features = build_edge_features(rr, all_embeddings, mc.cell_model_name, sim.max_radius,
+                                    dimension=sim.dimension)
     N, n_pts, input_dim = features.shape
 
     # Flatten, run MLP, reshape

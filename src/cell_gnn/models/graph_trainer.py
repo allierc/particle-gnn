@@ -444,7 +444,8 @@ def data_train_cell(config, erase, best_model, device):
                 optimizer, n_total_params = set_trainable_parameters(model, lr_embedding, lr)
                 rr = torch.tensor(np.linspace(0, max_radius, 1000)).to(device)
                 all_embeddings = model.a[0, :n_cells, :].clone().detach()
-                features = build_edge_features(rr, all_embeddings, mc.cell_model_name, max_radius)
+                features = build_edge_features(rr, all_embeddings, mc.cell_model_name, max_radius,
+                                                dimension=sim.dimension)
                 N_feat, n_pts, input_dim = features.shape
                 for sub_epochs in range(20):
                     optimizer.zero_grad()
@@ -1326,7 +1327,8 @@ def data_train_cell_field(config, erase, best_model, device):
                 optimizer, n_total_params = set_trainable_parameters(model, lr_embedding, lr)
                 rr = torch.tensor(np.linspace(0, max_radius, 1000)).to(device)
                 all_embeddings = model.a[0, :n_cells, :].clone().detach()
-                features = build_edge_features(rr, all_embeddings, mc.cell_model_name, max_radius)
+                features = build_edge_features(rr, all_embeddings, mc.cell_model_name, max_radius,
+                                                dimension=sim.dimension)
                 N_feat, n_pts, input_dim = features.shape
                 for sub_epochs in range(20):
                     optimizer.zero_grad()
