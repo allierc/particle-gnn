@@ -1,8 +1,8 @@
-"""Model registry for particle-gnn.
+"""Model registry for cell-gnn.
 
 Two registries:
   - Simulator registry: maps config names to physics simulator classes (ArbitraryODE, BoidsODE, GravityODE)
-  - Model registry: maps config names to learnable GNN classes (ParticleGNN, ParticleFieldGNN)
+  - Model registry: maps config names to learnable GNN classes (CellGNN, CellFieldGNN)
 
 Usage:
     @register_simulator("arbitrary_ode", "arbitrary_field_ode")
@@ -10,7 +10,7 @@ Usage:
         ...
 
     @register_model("arbitrary_ode", "boids_ode", "gravity_ode")
-    class ParticleGNN(nn.Module):
+    class CellGNN(nn.Module):
         ...
 
     sim_cls = get_simulator_class("arbitrary_ode")
@@ -28,9 +28,9 @@ def _discover_simulators():
     if _simulators_discovered:
         return
     _simulators_discovered = True
-    import particle_gnn.generators.arbitrary_ode  # noqa: F401
-    import particle_gnn.generators.boids_ode  # noqa: F401
-    import particle_gnn.generators.gravity_ode  # noqa: F401
+    import cell_gnn.generators.arbitrary_ode  # noqa: F401
+    import cell_gnn.generators.boids_ode  # noqa: F401
+    import cell_gnn.generators.gravity_ode  # noqa: F401
 
 
 def _discover_models():
@@ -38,8 +38,8 @@ def _discover_models():
     if _models_discovered:
         return
     _models_discovered = True
-    import particle_gnn.models.particle_gnn  # noqa: F401
-    import particle_gnn.models.particle_field_gnn  # noqa: F401
+    import cell_gnn.models.cell_gnn  # noqa: F401
+    import cell_gnn.models.cell_field_gnn  # noqa: F401
 
 
 def register_simulator(*names: str):

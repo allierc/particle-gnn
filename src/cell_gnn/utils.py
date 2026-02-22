@@ -100,11 +100,11 @@ def set_device(device: str = 'auto'):
     return device
 
 
-def set_size(x, particles, mass_distrib_index):
-    # particles = index_particles[n]
+def set_size(x, cells, mass_distrib_index):
+    # cells = index_cells[n]
 
-    #size = 5 * np.power(3, ((to_numpy(x[index_particles[n] , -2]) - 200)/100)) + 10
-    size = np.power((to_numpy(x[particles, mass_distrib_index])), 1.2) / 1.5
+    #size = 5 * np.power(3, ((to_numpy(x[index_cells[n] , -2]) - 200)/100)) + 10
+    size = np.power((to_numpy(x[cells, mass_distrib_index])), 1.2) / 1.5
 
     return size
 
@@ -135,8 +135,8 @@ def norm_area(x, device):
 
 
 def norm_velocity(x, dimension, device):
-    from particle_gnn.particle_state import ParticleState
-    if isinstance(x, ParticleState):
+    from cell_gnn.cell_state import CellState
+    if isinstance(x, CellState):
         vel = x.vel
     else:
         vel_start = 1 + dimension
@@ -181,8 +181,8 @@ def get_3d_bounding_box(pos):
 
 
 def norm_position(x, dimension, device):
-    from particle_gnn.particle_state import ParticleState
-    if isinstance(x, ParticleState):
+    from cell_gnn.cell_state import CellState
+    if isinstance(x, CellState):
         pos = x.pos
     else:
         pos = x[:, 1:1 + dimension]
@@ -247,12 +247,12 @@ def get_r2_numpy_corrcoef(x, y):
 class CustomColorMap:
     def __init__(self, config):
         self.cmap_name = config.plotting.colormap
-        self.model_name = config.graph_model.particle_model_name
+        self.model_name = config.graph_model.cell_model_name
 
         if self.cmap_name == 'tab10':
             self.nmap = 8
         else:
-            self.nmap = config.simulation.n_particles
+            self.nmap = config.simulation.n_cells
 
     def color(self, index):
         color_map = plt.colormaps.get_cmap(self.cmap_name)
@@ -275,6 +275,12 @@ def add_pre_folder(config_file_):
     elif 'gravity' in config_file_:
         config_file = os.path.join('gravity', config_file_)
         pre_folder = 'gravity/'
+    elif 'dicty' in config_file_:
+        config_file = os.path.join('misc', config_file_)
+        pre_folder = 'misc/'
+    elif 'embryo' in config_file_:
+        config_file = os.path.join('misc', config_file_)
+        pre_folder = 'misc/'
     else:
         raise ValueError(f'unknown config file type: {config_file_}')
 
@@ -283,14 +289,14 @@ def add_pre_folder(config_file_):
 
 def get_log_dir(config=[]):
 
-    if 'arbitrary_ode' in config.graph_model.particle_model_name:
+    if 'arbitrary_ode' in config.graph_model.cell_model_name:
         l_dir = os.path.join('./log/arbitrary/')
-    elif 'boids_ode' in config.graph_model.particle_model_name:
+    elif 'boids_ode' in config.graph_model.cell_model_name:
         l_dir = os.path.join('./log/boids/')
-    elif 'gravity_ode' in config.graph_model.particle_model_name:
+    elif 'gravity_ode' in config.graph_model.cell_model_name:
         l_dir = os.path.join('./log/gravity/')
     else:
-        raise ValueError(f'unknown particle model name: {config.graph_model.particle_model_name}')
+        raise ValueError(f'unknown cell model name: {config.graph_model.cell_model_name}')
 
     return l_dir
 
@@ -303,7 +309,7 @@ def create_log_dir(config=[], erase=True):
     os.makedirs(log_dir, exist_ok=True)
     os.makedirs(os.path.join(log_dir, 'models'), exist_ok=True)
     os.makedirs(os.path.join(log_dir, 'results'), exist_ok=True)
-    os.makedirs(os.path.join(log_dir, 'tmp_training/particle'), exist_ok=True)
+    os.makedirs(os.path.join(log_dir, 'tmp_training/cell'), exist_ok=True)
     os.makedirs(os.path.join(log_dir, 'tmp_training/external_input'), exist_ok=True)
     os.makedirs(os.path.join(log_dir, 'tmp_training/matrix'), exist_ok=True)
     os.makedirs(os.path.join(log_dir, 'tmp_training/prediction'), exist_ok=True)
@@ -320,7 +326,7 @@ def create_log_dir(config=[], erase=True):
         for f in files:
             if ('all' not in f) & ('field' not in f):
                 os.remove(f)
-        files = glob.glob(f"{log_dir}/tmp_training/particle/*")
+        files = glob.glob(f"{log_dir}/tmp_training/cell/*")
         for f in files:
             os.remove(f)
         files = glob.glob(f"{log_dir}/tmp_training/external_input/*")
@@ -354,7 +360,7 @@ def create_log_dir(config=[], erase=True):
 
 
 def fig_init(fontsize=None, formatx='%.2f', formaty='%.2f'):
-    from particle_gnn.figure_style import default_style
+    from cell_gnn.figure_style import default_style
     fig, ax = default_style.figure(height=12, formatx=formatx, formaty=formaty)
     fs = fontsize if fontsize is not None else default_style.frame_tick_font_size
     plt.xticks([])
@@ -405,19 +411,19 @@ def check_and_clear_memory(
             torch.cuda.empty_cache()
 
 
-def get_index_particles(x, n_particle_types, dimension):
-    from particle_gnn.particle_state import ParticleState
-    if isinstance(x, ParticleState):
-        ptype = x.particle_type
+def get_index_cells(x, n_cell_types, dimension):
+    from cell_gnn.cell_state import CellState
+    if isinstance(x, CellState):
+        ptype = x.cell_type
     else:
         type_col = 1 + 2 * dimension
         ptype = x[:, type_col]
 
-    index_particles = []
-    for n in range(n_particle_types):
+    index_cells = []
+    for n in range(n_cell_types):
         index = np.argwhere(ptype.detach().cpu().numpy() == n)
-        index_particles.append(index.squeeze())
-    return index_particles
+        index_cells.append(index.squeeze())
+    return index_cells
 
 
 def get_equidistant_points(n_points=1024):
@@ -446,8 +452,8 @@ def edges_radius_blockwise(
     Returns:
         edge_index: LongTensor of shape [2, E] on the same device as x
     """
-    from particle_gnn.particle_state import ParticleState
-    if isinstance(x, ParticleState):
+    from cell_gnn.cell_state import CellState
+    if isinstance(x, CellState):
         pos = x.pos
     else:
         pos = x[:, 1:dimension+1]

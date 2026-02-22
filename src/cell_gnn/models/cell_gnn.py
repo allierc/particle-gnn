@@ -1,22 +1,22 @@
 import numpy as np
 import torch
 import torch.nn as nn
-from particle_gnn.models.MLP import MLP
-from particle_gnn.utils import to_numpy
-from particle_gnn.particle_state import ParticleState
-from particle_gnn.graph_utils import remove_self_loops, scatter_aggregate
-from particle_gnn.models.registry import register_model
+from cell_gnn.models.MLP import MLP
+from cell_gnn.utils import to_numpy
+from cell_gnn.cell_state import CellState
+from cell_gnn.graph_utils import remove_self_loops, scatter_aggregate
+from cell_gnn.models.registry import register_model
 
 
 @register_model("arbitrary_ode", "boids_ode", "gravity_ode")
-class ParticleGNN(nn.Module):
+class CellGNN(nn.Module):
     """Interaction Network as proposed in this paper:
     https://proceedings.neurips.cc/paper/2016/hash/3147da8ab4a0437c15ef51a5cc7f2dc4-Abstract.html"""
 
     """
-    Model learning the acceleration of particles as a function of their relative distance and relative velocities.
+    Model learning the acceleration of cells as a function of their relative distance and relative velocities.
     The interaction function is defined by a MLP self.lin_edge
-    The particle embedding is defined by a table self.a
+    The cell embedding is defined by a table self.a
 
     Inputs
     ----------
@@ -25,7 +25,7 @@ class ParticleGNN(nn.Module):
     Returns
     -------
     pred : float
-        the acceleration of the particles (dimension 2)
+        the acceleration of the cells (dimension 2)
     """
 
     def __init__(self, config, device, aggr_type=None, bc_dpos=None, dimension=2):
@@ -51,11 +51,11 @@ class ParticleGNN(nn.Module):
         self.hidden_dim_update = model_config.hidden_dim_update
         self.output_size_update = model_config.output_size_update
 
-        self.model = model_config.particle_model_name
+        self.model = model_config.cell_model_name
         self.n_dataset = train_config.n_runs
         self.dimension = dimension
         self.delta_t = simulation_config.delta_t
-        self.n_particles = simulation_config.n_particles
+        self.n_cells = simulation_config.n_cells
         self.embedding_dim = model_config.embedding_dim
         self.embedding_trial = config.training.embedding_trial
 
@@ -84,20 +84,20 @@ class ParticleGNN(nn.Module):
                                hidden_size=self.hidden_dim_update, device=self.device)
 
         if self.state == 'sequence':
-            self.a = nn.Parameter(torch.ones((self.n_dataset, int(self.n_particles*100 + 100 ), self.embedding_dim), device=self.device, requires_grad=True,dtype=torch.float32))
+            self.a = nn.Parameter(torch.ones((self.n_dataset, int(self.n_cells*100 + 100 ), self.embedding_dim), device=self.device, requires_grad=True,dtype=torch.float32))
             self.embedding_step = self.n_frames // 100
         else:
             self.a = nn.Parameter(
-                    torch.tensor(np.ones((self.n_dataset, int(self.n_particles) + self.n_ghosts, self.embedding_dim)), device=self.device,
+                    torch.tensor(np.ones((self.n_dataset, int(self.n_cells) + self.n_ghosts, self.embedding_dim)), device=self.device,
                                  requires_grad=True, dtype=torch.float32))
 
-    def get_interp_a(self, k, particle_id, data_id):
-        id = particle_id * 100 + k // self.embedding_step
+    def get_interp_a(self, k, cell_id, data_id):
+        id = cell_id * 100 + k // self.embedding_step
         alpha = (k % self.embedding_step) / self.embedding_step
         return alpha * self.a[data_id.clone().detach(), id+1, :].squeeze() + (1 - alpha) * self.a[data_id.clone().detach(), id, :].squeeze()
 
 
-    def forward(self, state: ParticleState, edge_index: torch.Tensor, data_id=[], training=[], has_field=False, k=[]):
+    def forward(self, state: CellState, edge_index: torch.Tensor, data_id=[], training=[], has_field=False, k=[]):
 
         self.data_id = data_id
         self.training = training
@@ -128,11 +128,11 @@ class ParticleGNN(nn.Module):
             for n in range(derivatives.shape[1]//2):
                 derivatives[:, n*2:n*2+2] = derivatives[:, n*2:n*2+2] @ self.rotation_matrix
 
-        particle_id = state.index.unsqueeze(-1)
+        cell_id = state.index.unsqueeze(-1)
         if self.state == 'sequence':
-            embedding = self.get_interp_a(k, particle_id, self.data_id)
+            embedding = self.get_interp_a(k, cell_id, self.data_id)
         else:
-            embedding = self.a[self.data_id.clone().detach(), particle_id, :].squeeze()
+            embedding = self.a[self.data_id.clone().detach(), cell_id, :].squeeze()
 
         # Gather features for source (j) and target (i) nodes
         src, dst = edge_index[1], edge_index[0]
@@ -184,7 +184,7 @@ class ParticleGNN(nn.Module):
         out = self.lin_edge(in_features)
 
         if self.training==False:
-            pos = torch.argwhere(dst == self.particle_of_interest)
+            pos = torch.argwhere(dst == self.cell_of_interest)
             if pos.numel()>0:
                 self.msg = out[pos[:,0]]
             else:

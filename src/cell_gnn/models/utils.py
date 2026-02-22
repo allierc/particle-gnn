@@ -2,9 +2,9 @@ import torch
 import numpy as np
 import torch.nn as nn
 
-from particle_gnn.models.MLP import MLP
-from particle_gnn.models.registry import get_model_class
-from particle_gnn.utils import to_numpy, fig_init, choose_boundary_values
+from cell_gnn.models.MLP import MLP
+from cell_gnn.models.registry import get_model_class
+from cell_gnn.utils import to_numpy, fig_init, choose_boundary_values
 
 
 class KoLeoLoss(nn.Module):
@@ -62,7 +62,7 @@ def choose_training_model(model_config=None, device=None):
 
     aggr_type = model_config.graph_model.aggr_type
     dimension = model_config.simulation.dimension
-    name = model_config.graph_model.particle_model_name
+    name = model_config.graph_model.cell_model_name
 
     bc_pos, bc_dpos = choose_boundary_values(model_config.simulation.boundary)
 
@@ -80,9 +80,9 @@ def choose_training_model(model_config=None, device=None):
 
 
 def get_type_list(x, dimension):
-    from particle_gnn.particle_state import ParticleState
-    if isinstance(x, ParticleState):
-        return x.particle_type.clone().detach().unsqueeze(-1).float()
+    from cell_gnn.cell_state import CellState
+    if isinstance(x, CellState):
+        return x.cell_type.clone().detach().unsqueeze(-1).float()
     type_col = 1 + 2 * dimension
     type_list = x[:, type_col:type_col + 1].clone().detach()
     return type_list

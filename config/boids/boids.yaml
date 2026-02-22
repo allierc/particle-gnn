@@ -2,7 +2,7 @@ description: "Boids 16 different types"
 dataset: "boids"
 
 simulation:
-  particle_params:
+  cell_params:
     [
       [27.6, 92.5, 48.2],
       [32.0, 51.8, 29.8],
@@ -23,8 +23,8 @@ simulation:
     ]
   min_radius: 0.001
   max_radius: 0.04
-  n_particles: 1792
-  n_particle_types: 16
+  n_cells: 1792
+  n_cell_types: 16
   has_cell_division: False
   n_frames: 4000
   sigma: 0.005
@@ -34,7 +34,7 @@ simulation:
   start_frame: -1000
 
 graph_model:
-  particle_model_name: "boids_ode"
+  cell_model_name: "boids_ode"
   mesh_model_name: ""
   prediction: "2nd_derivative"
   input_size: 9

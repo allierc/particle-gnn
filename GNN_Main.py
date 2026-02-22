@@ -5,10 +5,10 @@ import warnings
 import matplotlib
 matplotlib.use("Agg")
 
-from particle_gnn.config import ParticleGNNConfig
-from particle_gnn.generators.graph_data_generator import data_generate
-from particle_gnn.models.graph_trainer import data_train, data_test
-from particle_gnn.utils import set_device, add_pre_folder
+from cell_gnn.config import CellGNNConfig
+from cell_gnn.generators.graph_data_generator import data_generate
+from cell_gnn.models.graph_trainer import data_train, data_test
+from cell_gnn.utils import set_device, add_pre_folder
 
 warnings.filterwarnings("ignore", message="pkg_resources is deprecated as an API")
 
@@ -16,7 +16,7 @@ warnings.filterwarnings("ignore", message="pkg_resources is deprecated as an API
 if __name__ == "__main__":
     warnings.filterwarnings("ignore", category=FutureWarning)
 
-    parser = argparse.ArgumentParser(description="ParticleGNN")
+    parser = argparse.ArgumentParser(description="CellGNN")
     parser.add_argument("-o", "--option", nargs="+", help="Option that takes multiple values")
     parser.add_argument("--n_epochs", type=int, default=None, help="Override n_epochs from config")
     parser.add_argument("--erase", action="store_true", help="Erase previous training results")
@@ -41,7 +41,7 @@ if __name__ == "__main__":
         print(" ")
         config_root = os.path.dirname(os.path.abspath(__file__)) + "/config"
         config_file, pre_folder = add_pre_folder(config_file_)
-        config = ParticleGNNConfig.from_yaml(f"{config_root}/{config_file}.yaml")
+        config = CellGNNConfig.from_yaml(f"{config_root}/{config_file}.yaml")
         config.dataset = pre_folder + config.dataset
         config.config_file = pre_folder + config_file_
         if args.n_epochs is not None:
@@ -81,5 +81,5 @@ if __name__ == "__main__":
                 sample_embedding=False,
                 step=5,
                 device=device,
-                particle_of_interest=0,
+                cell_of_interest=0,
             )

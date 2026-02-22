@@ -3,7 +3,7 @@ import numpy as np
 import torch
 import scipy.cluster.hierarchy as hcluster
 
-from particle_gnn.utils import to_numpy, fig_init
+from cell_gnn.utils import to_numpy, fig_init
 import time
 import numpy as np
 from sklearn.cluster import KMeans
@@ -44,13 +44,22 @@ class EmbeddingCluster:
                 clusters = hcluster.fclusterdata(data, thresh, criterion="inconsistent", method=self.cluster_connectivity) - 1
                 n_clusters = len(np.unique(clusters))
 
+            case 'dbscan':
+                db = DBSCAN(eps=thresh, min_samples=5)
+                clusters = db.fit_predict(data)
+                # Assign noise points (-1) to their own cluster
+                n_clusters = len(set(clusters)) - (1 if -1 in clusters else 0)
+                if -1 in clusters:
+                    clusters[clusters == -1] = n_clusters
+                    n_clusters += 1
+
             case _:
                 raise ValueError(f'Unknown method {method}')
 
         return clusters, n_clusters
 
 
-def sparsify_cluster(cluster_method, proj_interaction, embedding, cluster_distance_threshold, type_list, n_particle_types, embedding_cluster):
+def sparsify_cluster(cluster_method, proj_interaction, embedding, cluster_distance_threshold, type_list, n_cell_types, embedding_cluster):
 
     # normalization of projection because UMAP output is not normalized
     proj_interaction = (proj_interaction - np.min(proj_interaction)) / (np.max(proj_interaction) - np.min(proj_interaction)+1e-10)
@@ -75,9 +84,14 @@ def sparsify_cluster(cluster_method, proj_interaction, embedding, cluster_distan
         case 'distance_both':
             new_projection = np.concatenate((proj_interaction, embedding), axis=-1)
             labels, n_clusters = embedding_cluster.get(new_projection, 'distance', thresh=cluster_distance_threshold)
+        case 'dbscan_embedding':
+            labels, n_clusters = embedding_cluster.get(embedding, 'dbscan', thresh=cluster_distance_threshold)
+            proj_interaction = embedding
+        case 'dbscan_plot':
+            labels, n_clusters = embedding_cluster.get(proj_interaction, 'dbscan', thresh=cluster_distance_threshold)
 
     label_list = []
-    for n in range(n_particle_types):
+    for n in range(n_cell_types):
         pos = torch.argwhere(type_list == n)
         pos = to_numpy(pos)
         if len(pos) > 0:
@@ -95,8 +109,8 @@ def sparsify_cluster(cluster_method, proj_interaction, embedding, cluster_distan
             ax.scatter(embedding[pos, 0], embedding[pos, 1], s=5)
     plt.close()
 
-    new_labels = np.ones_like(labels) * n_particle_types
-    for n in range(n_particle_types):
+    new_labels = np.ones_like(labels) * n_cell_types
+    for n in range(n_cell_types):
         if n < len(label_list):
             new_labels[labels == label_list[n]] = n
 
@@ -106,7 +120,7 @@ def sparsify_cluster(cluster_method, proj_interaction, embedding, cluster_distan
 
     return labels, n_clusters, new_labels
 
-def sparsify_cluster_state(cluster_method, proj_interaction, embedding, cluster_distance_threshold, true_type_list, n_particle_types, embedding_cluster):
+def sparsify_cluster_state(cluster_method, proj_interaction, embedding, cluster_distance_threshold, true_type_list, n_cell_types, embedding_cluster):
 
     # normalization of projection because UMAP output is not normalized
     proj_interaction = (proj_interaction - np.min(proj_interaction)) / (np.max(proj_interaction) - np.min(proj_interaction)+1e-10)
@@ -137,7 +151,7 @@ def sparsify_cluster_state(cluster_method, proj_interaction, embedding, cluster_
     print(f"clustering computation time is {computation_time:0.2f} seconds.")
 
     label_list = []
-    for n in range(n_particle_types):
+    for n in range(n_cell_types):
         pos = np.argwhere(true_type_list == n).squeeze().astype(int)
         if len(pos)>0:
             tmp = labels[pos]
@@ -145,8 +159,8 @@ def sparsify_cluster_state(cluster_method, proj_interaction, embedding, cluster_
         else:
             label_list.append(0)
     label_list = np.array(label_list)
-    new_labels = np.ones_like(labels) * n_particle_types
-    for n in range(n_particle_types):
+    new_labels = np.ones_like(labels) * n_cell_types
+    for n in range(n_cell_types):
         new_labels[labels == label_list[n]] = n
 
     return labels, n_clusters, new_labels

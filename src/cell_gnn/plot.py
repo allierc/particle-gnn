@@ -1,4 +1,4 @@
-"""Centralized plot functions and vectorized helpers for particle-gnn.
+"""Centralized plot functions and vectorized helpers for cell-gnn.
 
 All plot functions that were previously scattered across models/utils.py,
 models/graph_trainer.py, and generators/graph_data_generator.py are
@@ -16,8 +16,8 @@ import torch
 import torch.nn as nn
 import umap
 
-from particle_gnn.figure_style import default_style, dark_style, FigureStyle
-from particle_gnn.utils import to_numpy
+from cell_gnn.figure_style import default_style, dark_style, FigureStyle
+from cell_gnn.utils import to_numpy
 
 
 # --------------------------------------------------------------------------- #
@@ -96,16 +96,16 @@ def build_edge_features(rr, embedding, model_name, max_radius):
 
 
 def _batched_mlp_eval(mlp, embeddings, rr, model_name, max_radius, device, chunk_size=512):
-    """Evaluate an MLP for all particles in batched mode.
+    """Evaluate an MLP for all cells in batched mode.
 
     Args:
         mlp: nn.Module — the edge MLP
-        embeddings: (N, embed_dim) tensor of particle embeddings
+        embeddings: (N, embed_dim) tensor of cell embeddings
         rr: (n_pts,) tensor of radial sample points
         model_name: str — model name for feature construction
         max_radius: float
         device: torch device
-        chunk_size: number of particles per chunk to avoid OOM
+        chunk_size: number of cells per chunk to avoid OOM
 
     Returns:
         (N, n_pts) tensor of MLP output (first output dim)
@@ -202,16 +202,16 @@ def get_embedding(model_a=None, dataset_number=0):
     return embedding
 
 
-def get_embedding_time_series(model=None, dataset_number=None, cell_id=None, n_particles=None, n_frames=None, has_cell_division=None):
+def get_embedding_time_series(model=None, dataset_number=None, cell_id=None, n_cells=None, n_frames=None, has_cell_division=None):
     embedding = []
     embedding.append(model.a[dataset_number])
     embedding = to_numpy(torch.stack(embedding).squeeze())
-    indexes = np.arange(n_frames) * n_particles + cell_id
+    indexes = np.arange(n_frames) * n_cells + cell_id
     return embedding[indexes]
 
 
-def get_type_time_series(new_labels=None, dataset_number=None, cell_id=None, n_particles=None, n_frames=None, has_cell_division=None):
-    indexes = np.arange(n_frames) * n_particles + cell_id
+def get_type_time_series(new_labels=None, dataset_number=None, cell_id=None, n_cells=None, n_frames=None, has_cell_division=None):
+    indexes = np.arange(n_frames) * n_cells + cell_id
     return new_labels[indexes]
 
 
@@ -219,12 +219,12 @@ def get_type_time_series(new_labels=None, dataset_number=None, cell_id=None, n_p
 #  analyze_edge_function — vectorized
 # --------------------------------------------------------------------------- #
 
-def analyze_edge_function(rr=[], vizualize=False, config=None, model_MLP=[], model=None, n_nodes=0, n_particles=None, ynorm=None, type_list=None, cmap=None, update_type=None, device=None):
+def analyze_edge_function(rr=[], vizualize=False, config=None, model_MLP=[], model=None, n_nodes=0, n_cells=None, ynorm=None, type_list=None, cmap=None, update_type=None, device=None):
 
     max_radius = config.simulation.max_radius
     min_radius = config.simulation.min_radius
     dimension = config.simulation.dimension
-    config_model = config.graph_model.particle_model_name
+    config_model = config.graph_model.cell_model_name
 
     if rr == []:
         if config_model == 'gravity_ode':
@@ -236,14 +236,14 @@ def analyze_edge_function(rr=[], vizualize=False, config=None, model_MLP=[], mod
 
     # Build all embeddings at once: (N, embed_dim)
     if len(model.a.shape) == 3:
-        all_embeddings = model.a[0, :n_particles, :]  # (N, embed_dim)
+        all_embeddings = model.a[0, :n_cells, :]  # (N, embed_dim)
     else:
-        all_embeddings = model.a[:n_particles, :]  # (N, embed_dim)
+        all_embeddings = model.a[:n_cells, :]  # (N, embed_dim)
 
     if config.training.do_tracking:
         pass  # embeddings used directly
     elif (update_type != 'NA') & model.embedding_trial:
-        b_rep = model.b[0].clone().detach().repeat(1, 1).expand(n_particles, -1)
+        b_rep = model.b[0].clone().detach().repeat(1, 1).expand(n_cells, -1)
         all_embeddings = torch.cat((all_embeddings, b_rep), dim=1)
 
     # Batched MLP evaluation: (N, 1000)
@@ -256,19 +256,19 @@ def analyze_edge_function(rr=[], vizualize=False, config=None, model_MLP=[], mod
         ax = plt.gca()
 
         # Determine subsampling
-        if n_particles <= 200:
+        if n_cells <= 200:
             subsample = 1
         else:
-            subsample = max(1, n_particles // 200)
+            subsample = max(1, n_cells // 200)
 
         _plot_curves_fast(
             ax, to_numpy(rr), func_list_,
-            type_list.flatten() if type_list is not None else np.zeros(n_particles),
+            type_list.flatten() if type_list is not None else np.zeros(n_cells),
             cmap, ynorm=to_numpy(ynorm),
             subsample=subsample, alpha=0.25, linewidth=1,
         )
 
-        if config.graph_model.particle_model_name == 'gravity_ode':
+        if config.graph_model.cell_model_name == 'gravity_ode':
             plt.xlim([1E-3, 0.02])
         plt.ylim(config.plotting.ylim)
 
@@ -291,7 +291,7 @@ def analyze_edge_function(rr=[], vizualize=False, config=None, model_MLP=[], mod
 #  plot_training — vectorized
 # --------------------------------------------------------------------------- #
 
-def plot_training(config, pred, gt, log_dir, epoch, N, x, index_particles, n_particles, n_particle_types, model, n_nodes, n_node_types, index_nodes, dataset_num, ynorm, cmap, axis, device):
+def plot_training(config, pred, gt, log_dir, epoch, N, x, index_cells, n_cells, n_cell_types, model, n_nodes, n_node_types, index_nodes, dataset_num, ynorm, cmap, axis, device):
 
     style = default_style
     simulation_config = config.simulation
@@ -340,15 +340,15 @@ def plot_training(config, pred, gt, log_dir, epoch, N, x, index_particles, n_par
         fig, ax = style.figure()
         if do_tracking:
             embedding = to_numpy(model.a)
-            for n in range(n_particle_types):
-                ax.scatter(embedding[index_particles[n], 0], embedding[index_particles[n], 1], color=cmap.color(n), s=1)
+            for n in range(n_cell_types):
+                ax.scatter(embedding[index_cells[n], 0], embedding[index_cells[n], 1], color=cmap.color(n), s=1)
         elif simulation_config.state_type == 'sequence':
             embedding = to_numpy(model.a[0].squeeze())
             ax.scatter(embedding[:-200, 0], embedding[:-200, 1], color=style.foreground, s=0.1)
         else:
             embedding = get_embedding(model.a, plot_config.data_embedding)
-            for n in range(n_particle_types):
-                ax.scatter(embedding[index_particles[n], 0], embedding[index_particles[n], 1], color=cmap.color(n), s=1)
+            for n in range(n_cell_types):
+                ax.scatter(embedding[index_cells[n], 0], embedding[index_cells[n], 1], color=cmap.color(n), s=1)
 
     plt.xticks([])
     plt.yticks([])
@@ -369,15 +369,15 @@ def plot_training(config, pred, gt, log_dir, epoch, N, x, index_particles, n_par
         fig, ax = style.figure()
         rr = torch.tensor(np.linspace(0, simulation_config.max_radius, 1000)).to(device)
 
-        # Build all (n, k) pair features: n_runs-1 * n_particles^2 combinations
+        # Build all (n, k) pair features: n_runs-1 * n_cells^2 combinations
         all_funcs = []
         for m in range(1, n_runs):
-            # Batched: for each m, build (n_particles * n_particles, n_pts) via pairs
-            emb_n = model.a[m, :n_particles, :]  # (N, embed_dim)
-            emb_k = model.a[m, :n_particles, :]  # (N, embed_dim)
+            # Batched: for each m, build (n_cells * n_cells, n_pts) via pairs
+            emb_n = model.a[m, :n_cells, :]  # (N, embed_dim)
+            emb_k = model.a[m, :n_cells, :]  # (N, embed_dim)
             # Expand to all pairs (N*N, embed_dim)
-            emb_n_rep = emb_n.unsqueeze(1).expand(-1, n_particles, -1).reshape(-1, emb_n.shape[-1])
-            emb_k_rep = emb_k.unsqueeze(0).expand(n_particles, -1, -1).reshape(-1, emb_k.shape[-1])
+            emb_n_rep = emb_n.unsqueeze(1).expand(-1, n_cells, -1).reshape(-1, emb_n.shape[-1])
+            emb_k_rep = emb_k.unsqueeze(0).expand(n_cells, -1, -1).reshape(-1, emb_k.shape[-1])
 
             n_pts = rr.shape[0]
             n_pairs = emb_n_rep.shape[0]
@@ -426,7 +426,7 @@ def plot_training(config, pred, gt, log_dir, epoch, N, x, index_particles, n_par
         plt.tight_layout()
         style.savefig(fig, f"./{log_dir}/tmp_training/function/MLP1/function_{epoch}_{N}.tif")
     else:
-        match model_config.particle_model_name:
+        match model_config.cell_model_name:
 
             case 'arbitrary_ode' | 'arbitrary_field_ode' | 'gravity_ode':
                 fig, ax = style.figure(height=12)
@@ -442,24 +442,24 @@ def plot_training(config, pred, gt, log_dir, epoch, N, x, index_particles, n_par
 
                 # Vectorized: build all embeddings and eval MLP in batch
                 if do_tracking:
-                    all_embeddings = model.a[:n_particles, :]
+                    all_embeddings = model.a[:n_cells, :]
                 else:
-                    all_embeddings = model.a[0, :n_particles, :]
+                    all_embeddings = model.a[0, :n_cells, :]
 
                 func_list = _batched_mlp_eval(model.lin_edge, all_embeddings, rr,
-                                              config.graph_model.particle_model_name,
+                                              config.graph_model.cell_model_name,
                                               simulation_config.max_radius, device)
 
                 # Plot with LineCollection
                 rr_np = to_numpy(rr)
                 ynorm_np = to_numpy(ynorm)
-                type_arr = to_numpy(x[:n_particles, type_col]).astype(int)
+                type_arr = to_numpy(x[:n_cells, type_col]).astype(int)
 
                 subsample = 5 if n_runs <= 5 else 1
                 _plot_curves_fast(ax, rr_np, to_numpy(func_list), type_arr, cmap,
                                   ynorm=ynorm_np, subsample=subsample, alpha=0.25, linewidth=2)
 
-                if model_config.particle_model_name == 'gravity_ode':
+                if model_config.cell_model_name == 'gravity_ode':
                     plt.xlim([0, 0.02])
                 plt.tight_layout()
                 style.savefig(fig, f"./{log_dir}/tmp_training/function/MLP1/function_{epoch}_{N}.tif")
@@ -471,18 +471,18 @@ def plot_training(config, pred, gt, log_dir, epoch, N, x, index_particles, n_par
 
                 # Vectorized MLP evaluation
                 if do_tracking:
-                    all_embeddings = model.a[:n_particles, :]
+                    all_embeddings = model.a[:n_cells, :]
                 else:
-                    all_embeddings = model.a[0, :n_particles, :]
+                    all_embeddings = model.a[0, :n_cells, :]
 
                 func_list = _batched_mlp_eval(model.lin_edge, all_embeddings, rr,
-                                              config.graph_model.particle_model_name,
+                                              config.graph_model.cell_model_name,
                                               max_radius_plot, device)
 
                 # Plot with LineCollection
                 rr_np = to_numpy(rr)
                 ynorm_np = to_numpy(ynorm)
-                type_arr = np.array([int(n // (n_particles / n_particle_types)) for n in range(n_particles)])
+                type_arr = np.array([int(n // (n_cells / n_cell_types)) for n in range(n_cells)])
 
                 _plot_curves_fast(ax, rr_np, to_numpy(func_list), type_arr, cmap,
                                   ynorm=ynorm_np, subsample=5, alpha=1.0, linewidth=2)
@@ -502,10 +502,10 @@ def plot_training(config, pred, gt, log_dir, epoch, N, x, index_particles, n_par
 
 
 # --------------------------------------------------------------------------- #
-#  plot_training_particle_field — vectorized
+#  plot_training_cell_field — vectorized
 # --------------------------------------------------------------------------- #
 
-def plot_training_particle_field(config, has_siren, has_siren_time, model_f, n_frames, model_name, log_dir, epoch, N, x, x_mesh, index_particles, n_neurons, n_neuron_types, model, n_nodes, n_node_types, index_nodes, dataset_num, ynorm, cmap, axis, device):
+def plot_training_cell_field(config, has_siren, has_siren_time, model_f, n_frames, model_name, log_dir, epoch, N, x, x_mesh, index_cells, n_neurons, n_neuron_types, model, n_nodes, n_node_types, index_nodes, dataset_num, ynorm, cmap, axis, device):
 
     style = default_style
     simulation_config = config.simulation
@@ -535,8 +535,8 @@ def plot_training_particle_field(config, has_siren, has_siren_time, model_f, n_f
         ax.scatter(embedding[:, 0], embedding[:, 1], c=to_numpy(x[:, type_col]) / n_neurons, s=1, cmap='viridis')
     else:
         for n in range(n_neuron_types):
-            ax.scatter(embedding[index_particles[n], 0],
-                       embedding[index_particles[n], 1], color=cmap.color(n), s=1)
+            ax.scatter(embedding[index_cells[n], 0],
+                       embedding[index_cells[n], 1], color=cmap.color(n), s=1)
 
     plt.tight_layout()
     style.savefig(fig, f"./{log_dir}/tmp_training/embedding/{model_name}_embedding_{epoch}_{N}.tif")
@@ -551,7 +551,7 @@ def plot_training_particle_field(config, has_siren, has_siren_time, model_f, n_f
         plt.xlim([0, simulation_config.max_radius])
         plt.tight_layout()
 
-    match model_config.particle_model_name:
+    match model_config.cell_model_name:
         case 'arbitrary_field_ode':
             rr = torch.tensor(np.linspace(0, simulation_config.max_radius, 200)).to(device)
         case 'boids_field_ode':
@@ -560,7 +560,7 @@ def plot_training_particle_field(config, has_siren, has_siren_time, model_f, n_f
     # Vectorized: all neurons at once
     all_embeddings = model.a[dataset_num, :n_neurons, :]  # (N, embed_dim)
     func_list = _batched_mlp_eval(model.lin_edge, all_embeddings, rr,
-                                  model_config.particle_model_name,
+                                  model_config.cell_model_name,
                                   max_radius, device)
 
     # Plot with LineCollection
@@ -605,18 +605,18 @@ def plot_training_particle_field(config, has_siren, has_siren_time, model_f, n_f
 #  Vectorized sparsity MLP evaluation
 # --------------------------------------------------------------------------- #
 
-def batched_sparsity_mlp_eval(model, rr, n_particles, config, device):
-    """Evaluate the edge MLP for all particles in batch mode, for sparsity fitting.
+def batched_sparsity_mlp_eval(model, rr, n_cells, config, device):
+    """Evaluate the edge MLP for all cells in batch mode, for sparsity fitting.
 
     Returns:
         pred: (N, n_pts, output_dim) tensor
     """
     mc = config.graph_model
     sim = config.simulation
-    all_embeddings = model.a[0, :n_particles, :].clone().detach()  # (N, embed_dim)
+    all_embeddings = model.a[0, :n_cells, :].clone().detach()  # (N, embed_dim)
 
     # Build features: (N, n_pts, input_dim)
-    features = build_edge_features(rr, all_embeddings, mc.particle_model_name, sim.max_radius)
+    features = build_edge_features(rr, all_embeddings, mc.cell_model_name, sim.max_radius)
     N, n_pts, input_dim = features.shape
 
     # Flatten, run MLP, reshape
@@ -632,8 +632,8 @@ def batched_sparsity_mlp_eval(model, rr, n_particles, config, device):
 #  True interaction function overlay
 # --------------------------------------------------------------------------- #
 
-def _plot_true_psi(ax, rr, config, n_particle_types, cmap, device):
-    """Plot true psi interaction curves for each particle type.
+def _plot_true_psi(ax, rr, config, n_cell_types, cmap, device):
+    """Plot true psi interaction curves for each cell type.
 
     Loads the ground-truth simulator via ``choose_model`` and evaluates
     ``psi(rr, p[n])`` for each type, drawing thick solid lines.
@@ -641,20 +641,20 @@ def _plot_true_psi(ax, rr, config, n_particle_types, cmap, device):
     Args:
         ax: matplotlib Axes to draw on.
         rr: (n_pts,) tensor of radial sample points.
-        config: ParticleGNNConfig.
-        n_particle_types: int.
+        config: CellGNNConfig.
+        n_cell_types: int.
         cmap: CustomColorMap instance.
         device: torch device.
     """
-    from particle_gnn.generators.utils import choose_model
+    from cell_gnn.generators.utils import choose_model
 
     true_model, _, _ = choose_model(config, device=device)
-    config_model = config.graph_model.particle_model_name
+    config_model = config.graph_model.cell_model_name
     p = true_model.p
 
     rr_np = to_numpy(rr)
 
-    for n in range(n_particle_types):
+    for n in range(n_cell_types):
         with torch.no_grad():
             if 'arbitrary_ode' in config_model:
                 func_type = 'arbitrary'
@@ -665,15 +665,15 @@ def _plot_true_psi(ax, rr, config, n_particle_types, cmap, device):
                 psi_n = true_model.psi(rr, p[n])
 
         psi_np = to_numpy(psi_n).flatten()
-        ax.plot(rr_np, psi_np, color=cmap.color(n), linewidth=4, alpha=0.75)
+        ax.plot(rr_np, psi_np, color='gray', linewidth=4, alpha=0.5)
 
 
 # --------------------------------------------------------------------------- #
 #  Training summary panels
 # --------------------------------------------------------------------------- #
 
-def plot_training_summary_panels(axes, model, config, n_particles, n_particle_types,
-                                 index_particles, type_list, ynorm, cmap,
+def plot_training_summary_panels(axes, model, config, n_cells, n_cell_types,
+                                 index_cells, type_list, ynorm, cmap,
                                  embedding_cluster, logger, device):
     """Plot embedding, edge functions, clustering, and sparsified embedding.
 
@@ -686,10 +686,10 @@ def plot_training_summary_panels(axes, model, config, n_particles, n_particle_ty
     Args:
         axes: array of 5 matplotlib Axes.
         model: trained GNN model (must have ``model.a`` and ``model.lin_edge``).
-        config: ParticleGNNConfig.
-        n_particles: int.
-        n_particle_types: int.
-        index_particles: list of index arrays per type.
+        config: CellGNNConfig.
+        n_cells: int.
+        n_cell_types: int.
+        index_cells: list of index arrays per type.
         type_list: (N,) tensor of ground-truth type labels.
         ynorm: normalization tensor.
         cmap: CustomColorMap instance.
@@ -701,22 +701,23 @@ def plot_training_summary_panels(axes, model, config, n_particles, n_particle_ty
         (labels, n_clusters, new_labels, func_list, model_a_, accuracy)
         where ``model_a_`` is the embedding with cluster medians applied.
     """
-    from particle_gnn.sparsify import sparsify_cluster
-    from sklearn import metrics
+    from sklearn.cluster import DBSCAN
+    from sklearn.metrics import accuracy_score
+    from scipy.optimize import linear_sum_assignment
 
     style = default_style
     tc = config.training
     mc = config.graph_model
     sim = config.simulation
-    config_model = mc.particle_model_name
+    config_model = mc.cell_model_name
 
     # --- Panel 1: Embedding ---
     ax = axes[1]
     plt.sca(ax)
     embedding = get_embedding(model.a, 0)
-    for n in range(n_particle_types):
-        ax.scatter(embedding[index_particles[n], 0],
-                   embedding[index_particles[n], 1], color=cmap.color(n), s=0.1)
+    for n in range(n_cell_types):
+        ax.scatter(embedding[index_cells[n], 0],
+                   embedding[index_cells[n], 1], color=cmap.color(n), s=0.1)
     style.xlabel(ax, 'ai0')
     style.ylabel(ax, 'ai1')
 
@@ -733,19 +734,19 @@ def plot_training_summary_panels(axes, model, config, n_particles, n_particle_ty
     ax = axes[2]
     plt.sca(ax)
 
-    # Get learned func_list and UMAP projection (no inline visualization)
-    func_list, proj_interaction = analyze_edge_function(
+    # Get learned func_list (skip UMAP of func_list — clustering uses embedding)
+    func_list, _ = analyze_edge_function(
         rr=rr, vizualize=False, config=config,
         model_MLP=model.lin_edge, model=model,
-        n_nodes=0, n_particles=n_particles, ynorm=ynorm,
+        n_nodes=0, n_cells=n_cells, ynorm=ynorm,
         type_list=to_numpy(type_list), cmap=cmap,
         update_type='NA', device=device)
 
     # Plot true psi curves (thick, behind learned)
-    _plot_true_psi(ax, rr, config, n_particle_types, cmap, device)
+    _plot_true_psi(ax, rr, config, n_cell_types, cmap, device)
 
     # Plot learned curves (thin, semi-transparent)
-    subsample = max(1, n_particles // 200) if n_particles > 200 else 1
+    subsample = max(1, n_cells // 200) if n_cells > 200 else 1
     type_np = to_numpy(type_list).flatten().astype(int)
     _plot_curves_fast(
         ax, to_numpy(rr), to_numpy(func_list),
@@ -756,13 +757,33 @@ def plot_training_summary_panels(axes, model, config, n_particles, n_particle_ty
         ax.set_xlim([1E-3, 0.02])
     ax.set_ylim(config.plotting.ylim)
 
-    # --- Clustering ---
-    labels, n_clusters, new_labels = sparsify_cluster(
-        tc.cluster_method, proj_interaction, embedding,
-        tc.cluster_distance_threshold, type_list,
-        n_particle_types, embedding_cluster)
+    # --- Clustering: UMAP on embedding + DBSCAN ---
+    print('UMAP on embedding ...')
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        trans = umap.UMAP(n_neighbors=100, min_dist=0.3, n_components=2,
+                          random_state=tc.seed).fit(embedding)
+        proj_embedding = trans.transform(embedding)
 
-    accuracy = metrics.accuracy_score(to_numpy(type_list), new_labels)
+    db = DBSCAN(eps=0.3, min_samples=5)
+    labels = db.fit_predict(proj_embedding)
+    n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
+    # Assign noise to its own cluster
+    if -1 in labels:
+        labels[labels == -1] = n_clusters
+        n_clusters += 1
+
+    # Hungarian algorithm for optimal label mapping
+    type_np_flat = to_numpy(type_list).flatten().astype(int)
+    size = max(n_cell_types, n_clusters)
+    confusion = np.zeros((size, size))
+    for t, c in zip(type_np_flat, labels):
+        confusion[int(t), int(c)] += 1
+    row_ind, col_ind = linear_sum_assignment(-confusion)
+    mapping = {col_ind[i]: row_ind[i] for i in range(len(col_ind))}
+    new_labels = np.array([mapping.get(int(l), -1) for l in labels])
+
+    accuracy = accuracy_score(type_np_flat, new_labels)
     print(f'accuracy: {np.round(accuracy, 3)}   n_clusters: {n_clusters}')
     logger.info(f'accuracy: {np.round(accuracy, 3)}    n_clusters: {n_clusters}')
 
@@ -772,9 +793,9 @@ def plot_training_summary_panels(axes, model, config, n_particles, n_particle_ty
     for n in np.unique(new_labels):
         pos = np.array(np.argwhere(new_labels == n).squeeze().astype(int))
         if pos.size > 0:
-            ax.scatter(proj_interaction[pos, 0], proj_interaction[pos, 1], s=5)
-    style.xlabel(ax, 'proj 0')
-    style.ylabel(ax, 'proj 1')
+            ax.scatter(proj_embedding[pos, 0], proj_embedding[pos, 1], s=5)
+    style.xlabel(ax, 'UMAP 0')
+    style.ylabel(ax, 'UMAP 1')
     style.annotate(ax, f'accuracy: {np.round(accuracy, 3)},  {n_clusters} clusters',
                    (0, 1.1), ha='left', va='top')
 

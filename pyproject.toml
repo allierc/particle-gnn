@@ -3,9 +3,9 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "particle-gnn"
+name = "cell-gnn"
 version = "0.1.0"
-description = "Graph Neural Networks for particle simulations (arbitrary, boids, gravity)"
+description = "Graph Neural Networks for cell simulations (arbitrary, boids, gravity)"
 requires-python = ">=3.10"
 dependencies = [
     "torch>=2.0",

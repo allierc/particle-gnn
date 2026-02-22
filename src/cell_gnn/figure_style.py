@@ -1,4 +1,4 @@
-"""Centralized plot styling for the particle-gnn project.
+"""Centralized plot styling for the cell-gnn project.
 
 Design principles:
   - consistent figure sizes across all plots
@@ -24,7 +24,7 @@ class FigureStyle:
 
     Usage::
 
-        from particle_gnn.figure_style import default_style as style
+        from cell_gnn.figure_style import default_style as style
 
         style.apply_globally()          # once at program start
         fig, ax = style.figure()        # create pre-styled figure
@@ -39,12 +39,12 @@ class FigureStyle:
     annotation_font_size: float = 10.0
     use_latex: bool = False
 
-    # --- large frame fonts (particle/field visualization) ------------------
+    # --- large frame fonts (cell/field visualization) ------------------
     frame_title_font_size: float = 48.0
     frame_tick_font_size: float = 32.0
 
     # --- geometry ----------------------------------------------------------
-    figure_height: float = 8.0          # inches — particle-gnn uses large square figs
+    figure_height: float = 8.0          # inches — cell-gnn uses large square figs
     default_aspect: float = 1.0         # square plots are the norm
     dpi: int = 170
 
@@ -60,8 +60,8 @@ class FigureStyle:
     line_width: float = 2.0
     marker_size: float = 10.0
 
-    # --- particle-gnn specific ---------------------------------------------
-    particle_scatter_size: float = 10.0
+    # --- cell-gnn specific ---------------------------------------------
+    cell_scatter_size: float = 10.0
     embedding_scatter_size: float = 5.0
 
     # --- dark mode flag (set by singletons) --------------------------------

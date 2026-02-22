@@ -1,10 +1,10 @@
 
 import torch
 import torch.nn as nn
-from particle_gnn.utils import to_numpy
-from particle_gnn.particle_state import ParticleState
-from particle_gnn.graph_utils import remove_self_loops, scatter_aggregate
-from particle_gnn.models.registry import register_simulator
+from cell_gnn.utils import to_numpy
+from cell_gnn.cell_state import CellState
+from cell_gnn.graph_utils import remove_self_loops, scatter_aggregate
+from cell_gnn.models.registry import register_simulator
 
 
 @register_simulator("arbitrary_ode", "arbitrary_field_ode")
@@ -13,10 +13,10 @@ class ArbitraryODE(nn.Module):
     https://proceedings.neurips.cc/paper/2016/hash/3147da8ab4a0437c15ef51a5cc7f2dc4-Abstract.html"""
 
     """
-    Compute particle velocity as a function of relative position and attraction-repulsion law.
+    Compute cell velocity as a function of relative position and attraction-repulsion law.
     The latter is defined by four parameters p = (p1, p2, p3, p4) and a parameter sigma.
 
-    See https://github.com/gpeyre/numerical-tours/blob/master/python/ml_10_particle_system.ipynb
+    See https://github.com/gpeyre/numerical-tours/blob/master/python/ml_10_cell_system.ipynb
 
     Inputs
     ----------
@@ -25,7 +25,7 @@ class ArbitraryODE(nn.Module):
     Returns
     -------
     d_pos : float
-        the velocity of the particles (dimension 2)
+        the velocity of the cells (dimension 2)
     """
 
     def __init__(self, aggr_type=[], p=[], func_p = None, sigma=[], bc_dpos=[], dimension=2, embedding_step=0):
@@ -48,33 +48,33 @@ class ArbitraryODE(nn.Module):
                 if self.func_p[n][1] != self.func_p[n][2]:
                     self_evolving_function == True
 
-    def get_interp_a(self, k, particle_id):
+    def get_interp_a(self, k, cell_id):
 
-        id = particle_id * 100 + k // self.embedding_step
+        id = cell_id * 100 + k // self.embedding_step
         alpha = (k % self.embedding_step) / self.embedding_step
 
         return alpha * self.a[id+1, :] + (1 - alpha) * self.a[id, :]
 
-    def forward(self, state: ParticleState, edge_index: torch.Tensor, has_field=False, k=0):
+    def forward(self, state: CellState, edge_index: torch.Tensor, has_field=False, k=0):
         if has_field:
             field = state.field
         else:
-            field = torch.ones(state.n_particles, 1, dtype=state.pos.dtype, device=state.pos.device)
+            field = torch.ones(state.n_cells, 1, dtype=state.pos.dtype, device=state.pos.device)
 
         edge_index = remove_self_loops(edge_index)
-        parameters = self.p[to_numpy(state.particle_type),:]
+        parameters = self.p[to_numpy(state.cell_type),:]
 
         src, dst = edge_index[1], edge_index[0]
         pos_i, pos_j = state.pos[dst], state.pos[src]
-        particle_type_i = state.particle_type[dst, None]
+        cell_type_i = state.cell_type[dst, None]
         parameters_i = parameters[dst].squeeze()
         field_j = field[src]
 
-        messages = self.message(pos_i, pos_j, particle_type_i, parameters_i, field_j)
-        d_pos = scatter_aggregate(messages, dst, state.n_particles, self.aggr_type)
+        messages = self.message(pos_i, pos_j, cell_type_i, parameters_i, field_j)
+        d_pos = scatter_aggregate(messages, dst, state.n_cells, self.aggr_type)
         return d_pos
 
-    def message(self, pos_i, pos_j, particle_type_i, parameters_i, field_j):
+    def message(self, pos_i, pos_j, cell_type_i, parameters_i, field_j):
 
 
         distance_squared = torch.sum(self.bc_dpos(pos_j - pos_i) ** 2, axis=1)
@@ -91,7 +91,7 @@ class ArbitraryODE(nn.Module):
         f2 = f2[:, None] * self.bc_dpos(pos_j - pos_i) * field_j
 
         for n in range(self.p.shape[0]):
-            pos = torch.argwhere(particle_type_i == n)
+            pos = torch.argwhere(cell_type_i == n)
             if pos.numel() > 0:
                 pos = pos[:, 0]
                 if self.func_p[n][0] == 'arbitrary':
@@ -113,4 +113,6 @@ class ArbitraryODE(nn.Module):
             out = r * (p[0] * torch.exp(-r ** (2 * p[1]) / (2 * self.sigma ** 2)) - p[2] * torch.exp(-r ** (2 * p[3]) / (2 * self.sigma ** 2)))
         elif func == 'linear':
             out = p[0] * r + p[1]
+
+        return out
 

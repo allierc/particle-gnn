@@ -1,10 +1,10 @@
 
 import torch
 import torch.nn as nn
-from particle_gnn.utils import to_numpy
-from particle_gnn.particle_state import ParticleState
-from particle_gnn.graph_utils import remove_self_loops, scatter_aggregate
-from particle_gnn.models.registry import register_simulator
+from cell_gnn.utils import to_numpy
+from cell_gnn.cell_state import CellState
+from cell_gnn.graph_utils import remove_self_loops, scatter_aggregate
+from cell_gnn.models.registry import register_simulator
 
 
 @register_simulator("boids_ode", "boids_field_ode")
@@ -40,14 +40,14 @@ class BoidsODE(nn.Module):
         self.a4 = 0.5E-5
         self.a5 = 1E-8
 
-    def forward(self, state: ParticleState, edge_index: torch.Tensor, has_field=False):
+    def forward(self, state: CellState, edge_index: torch.Tensor, has_field=False):
         if has_field:
             field = state.field
         else:
-            field = torch.ones(state.n_particles, 1, dtype=state.pos.dtype, device=state.pos.device)
+            field = torch.ones(state.n_cells, 1, dtype=state.pos.dtype, device=state.pos.device)
 
         edge_index = remove_self_loops(edge_index)
-        parameters = self.p[to_numpy(state.particle_type), :]
+        parameters = self.p[to_numpy(state.cell_type), :]
         d_pos = state.vel.clone().detach()
 
         src, dst = edge_index[1], edge_index[0]
@@ -57,7 +57,7 @@ class BoidsODE(nn.Module):
         field_j = field[src]
 
         messages = self.message(pos_i, pos_j, parameters_i, d_pos_i, d_pos_j, field_j)
-        dd_pos = scatter_aggregate(messages, dst, state.n_particles, self.aggr_type)
+        dd_pos = scatter_aggregate(messages, dst, state.n_cells, self.aggr_type)
         return dd_pos
 
     def message(self, pos_i, pos_j, parameters_i, d_pos_i, d_pos_j, field_j):

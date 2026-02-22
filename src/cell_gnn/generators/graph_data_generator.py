@@ -13,15 +13,15 @@ import logging
 from shutil import copyfile
 from tifffile import imread
 
-from particle_gnn.generators.utils import choose_model, init_particlestate, init_mesh
-from particle_gnn.particle_state import ParticleState
-from particle_gnn.zarr_io import ZarrSimulationWriterV3, ZarrArrayWriter
-from particle_gnn.figure_style import default_style, dark_style
-from particle_gnn.utils import (
+from cell_gnn.generators.utils import choose_model, init_cellstate, init_mesh
+from cell_gnn.cell_state import CellState
+from cell_gnn.zarr_io import ZarrSimulationWriterV3, ZarrArrayWriter
+from cell_gnn.figure_style import default_style, dark_style
+from cell_gnn.utils import (
     to_numpy,
     CustomColorMap,
     check_and_clear_memory,
-    get_index_particles,
+    get_index_cells,
     fig_init,
     get_equidistant_points,
     get_edges_with_cache,
@@ -55,10 +55,21 @@ def data_generate(
         print("watch out: data already generated")
         # return
 
-    has_particle_field = "field_ode" in config.graph_model.particle_model_name
+    has_external_data = config.data_folder_name != "none"
+    has_cell_field = "field_ode" in config.graph_model.cell_model_name
 
-    if has_particle_field:
-        data_generate_particle_field(
+    if has_external_data:
+        load_from_data(
+            config,
+            visualize=visualize,
+            step=step,
+            device=device,
+            save=save,
+        )
+        return
+
+    if has_cell_field:
+        data_generate_cell_field(
             config,
             visualize=visualize,
             run_vizualized=run_vizualized,
@@ -73,7 +84,7 @@ def data_generate(
             timer=timer,
         )
     else:
-        data_generate_particle(
+        data_generate_cell(
             config,
             visualize=visualize,
             run_vizualized=run_vizualized,
@@ -91,7 +102,170 @@ def data_generate(
     default_style.apply_globally()
 
 
-def data_generate_particle(
+def load_from_data(
+    config,
+    visualize=True,
+    step=100,
+    device=None,
+    save=True,
+):
+    """Load external simulation data from NPZ and write to zarr V3 format.
+
+    Expects an NPZ file at graphs_data/{config.data_folder_name} with keys:
+        X:     (T, N, dim) positions
+        PDIR:  (T, N, dim) polarity direction
+        FPAIR: (T, N, dim) pair forces (used as derivative target)
+        params: dict with at least 'L' (box size)
+
+    Positions are normalized to [0, 1] using the box size L.
+    Velocity is computed from finite differences of normalized positions.
+    """
+
+    sim = config.simulation
+    dataset_name = config.dataset
+    data_file = config.data_folder_name
+    dimension = sim.dimension
+    n_cells = sim.n_cells
+    delta_t = sim.delta_t
+    cmap = CustomColorMap(config=config)
+
+    print(f"loading data from graphs_data/{data_file} ...")
+
+    # load NPZ
+    data = np.load(f"graphs_data/{data_file}", allow_pickle=True)
+    X = data['X']           # (T, N, dim) positions
+    FPAIR = data['FPAIR']   # (T, N, dim) pair forces
+    params = data['params'].item() if hasattr(data['params'], 'item') else data['params']
+    L = float(params['L'])
+
+    n_frames_total = X.shape[0]
+    print(f"  source: {n_frames_total} frames, {X.shape[1]} cells, {X.shape[2]}D, L={L}")
+
+    # normalize positions to [0, 1]
+    pos = X / L
+
+    # compute velocity from finite differences with periodic minimum image
+    dpos = np.diff(pos, axis=0)                  # (T-1, N, dim)
+    dpos = dpos - np.round(dpos)                 # minimum image in [0, 1]
+    vel = dpos / delta_t
+    vel = np.concatenate([vel, vel[-1:]], axis=0)  # repeat last frame velocity
+
+    # prepare output directory
+    folder = f"./graphs_data/{dataset_name}/"
+    os.makedirs(folder, exist_ok=True)
+    os.makedirs(f"{folder}/Fig/", exist_ok=True)
+
+    if not save:
+        print("save=False, skipping zarr write")
+        return
+
+    run = 0
+
+    x_writer = ZarrSimulationWriterV3(
+        path=f"graphs_data/{dataset_name}/x_list_{run}",
+        n_cells=n_cells,
+        dimension=dimension,
+        time_chunks=2000,
+    )
+    y_writer = ZarrArrayWriter(
+        path=f"graphs_data/{dataset_name}/y_list_{run}",
+        n_cells=n_cells,
+        n_features=dimension,
+        time_chunks=2000,
+    )
+
+    cell_type = torch.zeros(n_cells, dtype=torch.long)
+
+    for t in trange(n_frames_total, ncols=100):
+        state = CellState(
+            index=torch.arange(n_cells, dtype=torch.long),
+            pos=torch.tensor(pos[t], dtype=torch.float32),
+            vel=torch.tensor(vel[t], dtype=torch.float32),
+            cell_type=cell_type,
+        )
+        x_writer.append_state(state)
+        y_writer.append(FPAIR[t].astype(np.float32))
+
+        # 3D scatter plot
+        if visualize and (t % step == 0) and dimension == 3:
+            fig = plt.figure(figsize=(20, 10))
+
+            ax1 = fig.add_subplot(121, projection="3d")
+            pos_all = pos[t]  # (N, 3)
+            ax1.scatter(
+                pos_all[:, 0], pos_all[:, 1], pos_all[:, 2],
+                s=20, color=cmap.color(0), alpha=0.5, edgecolors="none", zorder=2,
+            )
+            # draw 3D edges between cells within max_radius * 3
+            max_r_3d = sim.max_radius * 3
+            dx_3d = pos_all[:, None, :] - pos_all[None, :, :]
+            raw_dx_3d = dx_3d.copy()
+            dx_3d = dx_3d - np.round(dx_3d)
+            dist_3d = np.sqrt((dx_3d ** 2).sum(axis=-1))
+            wraps_3d = np.any(np.abs(raw_dx_3d - dx_3d) > 0.5 * max_r_3d, axis=-1)
+            i3, j3 = np.where((dist_3d > 0) & (dist_3d < max_r_3d) & ~wraps_3d)
+            for i, j in zip(i3, j3):
+                if j > i:
+                    ax1.plot(
+                        [pos_all[i, 0], pos_all[j, 0]],
+                        [pos_all[i, 1], pos_all[j, 1]],
+                        [pos_all[i, 2], pos_all[j, 2]],
+                        color=cmap.color(0), linewidth=2, alpha=0.25, zorder=1,
+                    )
+            ax1.set_xlim([0, 1])
+            ax1.set_ylim([0, 1])
+            ax1.set_zlim([0, 1])
+            ax1.set_xlabel("X")
+            ax1.set_ylabel("Y")
+            ax1.set_zlabel("Z")
+            ax1.set_title(f"frame {t}")
+
+            ax2 = fig.add_subplot(122)
+            z_center, z_thickness = 0.5, 0.1
+            z_vals = pos[t, :, 2]
+            mask = np.abs(z_vals - z_center) < z_thickness
+            pos_slice = pos[t, mask, :2]
+            ax2.scatter(
+                pos_slice[:, 0], pos_slice[:, 1],
+                s=30, color=cmap.color(0), alpha=0.7, edgecolors="none", zorder=2,
+            )
+            # draw edges between cells within max_radius
+            max_r = sim.max_radius * 3
+            if len(pos_slice) > 0:
+                dx = pos_slice[:, None, :] - pos_slice[None, :, :]
+                raw_dx = dx.copy()
+                dx = dx - np.round(dx)  # minimum image
+                dist = np.sqrt((dx ** 2).sum(axis=-1))
+                # skip edges that wrap across periodic boundary
+                wraps = np.any(np.abs(raw_dx - dx) > 0.5 * max_r, axis=-1)
+                i_idx, j_idx = np.where((dist > 0) & (dist < max_r) & ~wraps)
+                for i, j in zip(i_idx, j_idx):
+                    if j > i:
+                        ax2.plot(
+                            [pos_slice[i, 0], pos_slice[j, 0]],
+                            [pos_slice[i, 1], pos_slice[j, 1]],
+                            color=cmap.color(0), linewidth=2, alpha=0.25, zorder=1,
+                        )
+            ax2.set_xlim([0, 1])
+            ax2.set_ylim([0, 1])
+            ax2.set_xlabel("X")
+            ax2.set_ylabel("Y")
+            ax2.set_title(
+                f"Z cross-section ({z_center - z_thickness:.1f} < z < {z_center + z_thickness:.1f})"
+            )
+            ax2.set_aspect("equal")
+
+            plt.tight_layout()
+            num = f"{t:06}"
+            fig.savefig(f"graphs_data/{dataset_name}/Fig/Fig_{run}_{num}.tif", dpi=150)
+            plt.close(fig)
+
+    n_written = x_writer.finalize()
+    y_writer.finalize()
+    print(f"loaded {n_written} frames from {data_file} (saved as .zarr)")
+
+
+def data_generate_cell(
     config,
     visualize=True,
     run_vizualized=0,
@@ -109,16 +283,16 @@ def data_generate_particle(
     tc = config.training
     mc = config.graph_model
 
-    print(f"generating data ... {mc.particle_model_name}")
+    print(f"generating data ... {mc.cell_model_name}")
 
     dimension = sim.dimension
     max_radius = sim.max_radius
     min_radius = sim.min_radius
-    n_particle_types = sim.n_particle_types
-    n_particles = sim.n_particles
+    n_cell_types = sim.n_cell_types
+    n_cells = sim.n_cells
     delta_t = sim.delta_t
     n_frames = sim.n_frames
-    has_particle_dropout = tc.particle_dropout > 0
+    has_cell_dropout = tc.cell_dropout > 0
     cmap = CustomColorMap(config=config)
     dataset_name = config.dataset
 
@@ -148,12 +322,12 @@ def data_generate_particle(
     # create GNN
     model, bc_pos, bc_dpos = choose_model(config=config, device=device)
 
-    particle_dropout_mask = np.arange(n_particles)
-    if has_particle_dropout:
-        draw = np.random.permutation(np.arange(n_particles))
-        cut = int(n_particles * (1 - tc.particle_dropout))
-        particle_dropout_mask = draw[0:cut]
-        inv_particle_dropout_mask = draw[cut:]
+    cell_dropout_mask = np.arange(n_cells)
+    if has_cell_dropout:
+        draw = np.random.permutation(np.arange(n_cells))
+        cut = int(n_cells * (1 - tc.cell_dropout))
+        cell_dropout_mask = draw[0:cut]
+        inv_cell_dropout_mask = draw[cut:]
         x_removed_list = []
 
     if sim.angular_bernoulli != [-1]:
@@ -169,39 +343,39 @@ def data_generate_particle(
         memory_percentage_threshold=0.6,
     )
 
-    n_particles = sim.n_particles
+    n_cells = sim.n_cells
 
     # zarr V3 writers for incremental saving (memory efficient)
     x_writer = ZarrSimulationWriterV3(
         path=f"graphs_data/{dataset_name}/x_list_{run}",
-        n_particles=n_particles,
+        n_cells=n_cells,
         dimension=dimension,
         time_chunks=2000,
     )
     y_writer = ZarrArrayWriter(
         path=f"graphs_data/{dataset_name}/y_list_{run}",
-        n_particles=n_particles,
+        n_cells=n_cells,
         n_features=dimension,
         time_chunks=2000,
     )
 
-    # initialize particle state
-    x = init_particlestate(config=config, scenario=scenario, ratio=ratio, device=device)
+    # initialize cell state
+    x = init_cellstate(config=config, scenario=scenario, ratio=ratio, device=device)
     edge_cache = NeighborCache()
 
     time.sleep(0.5)
     for it in trange(sim.start_frame, n_frames + 1, ncols=100):
         # calculate type change
         if sim.state_type == "sequence":
-            sample = torch.rand((n_particles, 1), device=device)
+            sample = torch.rand((n_cells, 1), device=device)
             sample = (
                 sample < (1 / config.simulation.state_params[0])
-            ) * torch.randint(0, n_particle_types, (n_particles, 1), device=device)
-            x.particle_type = (x.particle_type + sample.squeeze(-1).long()) % n_particle_types
+            ) * torch.randint(0, n_cell_types, (n_cells, 1), device=device)
+            x.cell_type = (x.cell_type + sample.squeeze(-1).long()) % n_cell_types
 
         x_packed = x.to_packed()
-        index_particles = get_index_particles(
-            x_packed, n_particle_types, dimension
+        index_cells = get_index_cells(
+            x_packed, n_cell_types, dimension
         )  # can be different from frame to frame
 
         # compute connectivity rule
@@ -226,7 +400,7 @@ def data_generate_particle(
                 t1 = time.perf_counter()
                 print(
                     f"[edge build] "
-                    f"N={x.n_particles:6d}, "
+                    f"N={x.n_cells:6d}, "
                     f"E={edge_index.shape[1]:8d}, "
                     f"time={(t1 - t0)*1000:.2f} ms"
                 )
@@ -236,7 +410,7 @@ def data_generate_particle(
 
         if sim.angular_sigma > 0:
             phi = (
-                torch.randn(n_particles, device=device)
+                torch.randn(n_cells, device=device)
                 * sim.angular_sigma
                 / 360
                 * np.pi
@@ -248,7 +422,7 @@ def data_generate_particle(
             new_vy = sin_phi * y[:, 0] + cos_phi * y[:, 1]
             y = torch.cat((new_vx[:, None], new_vy[:, None]), 1).clone().detach()
         if sim.angular_bernoulli != [-1]:
-            z_i = stats.bernoulli(b[3]).rvs(n_particles)
+            z_i = stats.bernoulli(b[3]).rvs(n_cells)
             phi = np.array([g.rvs() for g in generative_m[z_i]]) / 360 * np.pi * 2
             phi = torch.tensor(phi, device=device, dtype=torch.float32)
             cos_phi = torch.cos(phi)
@@ -259,18 +433,18 @@ def data_generate_particle(
 
         # save frame to zarr
         if (it >= 0) & save:
-            if has_particle_dropout:
-                x_sub = x.subset(particle_dropout_mask).detach()
-                x_sub.index = torch.arange(x_sub.n_particles, device=device)
+            if has_cell_dropout:
+                x_sub = x.subset(cell_dropout_mask).detach()
+                x_sub.index = torch.arange(x_sub.n_cells, device=device)
                 x_writer.append_state(x_sub)
-                x_removed = x.subset(inv_particle_dropout_mask).detach()
+                x_removed = x.subset(inv_cell_dropout_mask).detach()
                 x_removed_list.append(x_removed.to_packed())
-                y_writer.append(to_numpy(y[particle_dropout_mask].clone().detach()))
+                y_writer.append(to_numpy(y[cell_dropout_mask].clone().detach()))
             else:
                 x_writer.append_state(x.detach())
                 y_writer.append(to_numpy(y.clone().detach()))
 
-        # particle update
+        # cell update
         if mc.prediction == "2nd_derivative":
             x.vel = x.vel + y * delta_t
         else:
@@ -289,30 +463,30 @@ def data_generate_particle(
             if "bw" in style:
                 fig, ax = fig_init(formatx="%.1f", formaty="%.1f")
                 s_p = 100
-                for n in range(n_particle_types):
+                for n in range(n_cell_types):
                     plt.scatter(
-                        to_numpy(x.pos[index_particles[n], 0]),
-                        to_numpy(x.pos[index_particles[n], 1]),
+                        to_numpy(x.pos[index_cells[n], 0]),
+                        to_numpy(x.pos[index_cells[n], 1]),
                         s=s_p,
                         color="k",
                     )
-                if tc.particle_dropout > 0:
+                if tc.cell_dropout > 0:
                     plt.scatter(
-                        x.pos[inv_particle_dropout_mask, 0].detach().cpu().numpy(),
-                        x.pos[inv_particle_dropout_mask, 1].detach().cpu().numpy(),
+                        x.pos[inv_cell_dropout_mask, 0].detach().cpu().numpy(),
+                        x.pos[inv_cell_dropout_mask, 1].detach().cpu().numpy(),
                         s=25,
                         color="k",
                         alpha=0.75,
                     )
                     plt.plot(
-                        x.pos[inv_particle_dropout_mask, 0].detach().cpu().numpy(),
-                        x.pos[inv_particle_dropout_mask, 1].detach().cpu().numpy(),
+                        x.pos[inv_cell_dropout_mask, 0].detach().cpu().numpy(),
+                        x.pos[inv_cell_dropout_mask, 1].detach().cpu().numpy(),
                         "+",
                         color="w",
                     )
                 plt.xlim([0, 1])
                 plt.ylim([0, 1])
-                if "gravity_ode" in mc.particle_model_name:
+                if "gravity_ode" in mc.cell_model_name:
                     plt.xlim([-2, 2])
                     plt.ylim([-2, 2])
                 if "latex" in style:
@@ -333,7 +507,7 @@ def data_generate_particle(
 
 
             if "color" in style:
-                if mc.particle_model_name == "PDE_O":
+                if mc.cell_model_name == "PDE_O":
                     fig, ax = active_style.figure(height=12)
                     plt.scatter(
                         x.field[:, 0].detach().cpu().numpy(),
@@ -366,16 +540,16 @@ def data_generate_particle(
                     plt.tight_layout()
                     active_style.savefig(fig, f"graphs_data/{dataset_name}/Fig/Rot_{run}_Fig{it}.jpg")
 
-                elif (mc.particle_model_name == "arbitrary_ode") & (dimension == 3):
+                elif (mc.cell_model_name == "arbitrary_ode") & (dimension == 3):
                     fig, _ = active_style.figure(width=20, height=10)
 
                     # Left panel: 3D view
                     ax1 = fig.add_subplot(121, projection="3d")
-                    for n in range(n_particle_types):
+                    for n in range(n_cell_types):
                         ax1.scatter(
-                            to_numpy(x.pos[index_particles[n], 0]),
-                            to_numpy(x.pos[index_particles[n], 1]),
-                            to_numpy(x.pos[index_particles[n], 2]),
+                            to_numpy(x.pos[index_cells[n], 0]),
+                            to_numpy(x.pos[index_cells[n], 1]),
+                            to_numpy(x.pos[index_cells[n], 2]),
                             s=10,
                             color=cmap.color(n),
                             alpha=0.5,
@@ -392,12 +566,12 @@ def data_generate_particle(
                     ax2 = fig.add_subplot(122)
                     z_center = 0.5
                     z_thickness = 0.1
-                    for n in range(n_particle_types):
-                        z_vals = to_numpy(x.pos[index_particles[n], 2])
+                    for n in range(n_cell_types):
+                        z_vals = to_numpy(x.pos[index_cells[n], 2])
                         mask = np.abs(z_vals - z_center) < z_thickness
                         ax2.scatter(
-                            to_numpy(x.pos[index_particles[n], 0])[mask],
-                            to_numpy(x.pos[index_particles[n], 1])[mask],
+                            to_numpy(x.pos[index_cells[n], 0])[mask],
+                            to_numpy(x.pos[index_cells[n], 1])[mask],
                             s=15,
                             color=cmap.color(n),
                             alpha=0.7,
@@ -419,31 +593,31 @@ def data_generate_particle(
                     fig, ax = fig_init(formatx="%.1f", formaty="%.1f")
                     s_p = 25
 
-                    for n in range(n_particle_types):
+                    for n in range(n_cell_types):
                         plt.scatter(
-                            to_numpy(x.pos[index_particles[n], 1]),
-                            to_numpy(x.pos[index_particles[n], 0]),
+                            to_numpy(x.pos[index_cells[n], 1]),
+                            to_numpy(x.pos[index_cells[n], 0]),
                             s=s_p,
                             color=cmap.color(n),
                         )
-                    if tc.particle_dropout > 0:
+                    if tc.cell_dropout > 0:
                         plt.scatter(
-                            x.pos[inv_particle_dropout_mask, 1].detach().cpu().numpy(),
-                            x.pos[inv_particle_dropout_mask, 0].detach().cpu().numpy(),
+                            x.pos[inv_cell_dropout_mask, 1].detach().cpu().numpy(),
+                            x.pos[inv_cell_dropout_mask, 0].detach().cpu().numpy(),
                             s=25,
                             color="k",
                             alpha=0.75,
                         )
                         plt.plot(
-                            x.pos[inv_particle_dropout_mask, 1].detach().cpu().numpy(),
-                            x.pos[inv_particle_dropout_mask, 0].detach().cpu().numpy(),
+                            x.pos[inv_cell_dropout_mask, 1].detach().cpu().numpy(),
+                            x.pos[inv_cell_dropout_mask, 0].detach().cpu().numpy(),
                             "+",
                             color="w",
                         )
 
                     plt.xlim([0, 1])
                     plt.ylim([0, 1])
-                    if "gravity_ode" in mc.particle_model_name:
+                    if "gravity_ode" in mc.cell_model_name:
                         plt.xlim([-2, 2])
                         plt.ylim([-2, 2])
                     if "latex" in style:
@@ -474,24 +648,24 @@ def data_generate_particle(
         y_writer.finalize()
         print(f"generated {n_frames_written} frames total (saved as .zarr)")
 
-        if has_particle_dropout:
+        if has_cell_dropout:
             torch.save(
                 x_removed_list,
                 f"graphs_data/{dataset_name}/x_removed_list_{run}.pt",
             )
             np.save(
-                f"graphs_data/{dataset_name}/particle_dropout_mask.npy",
-                particle_dropout_mask,
+                f"graphs_data/{dataset_name}/cell_dropout_mask.npy",
+                cell_dropout_mask,
             )
             np.save(
-                f"graphs_data/{dataset_name}/inv_particle_dropout_mask.npy",
-                inv_particle_dropout_mask,
+                f"graphs_data/{dataset_name}/inv_cell_dropout_mask.npy",
+                inv_cell_dropout_mask,
             )
 
         torch.save(model.p, f"graphs_data/{dataset_name}/model_p.pt")
 
 
-def data_generate_particle_field(
+def data_generate_cell_field(
     config,
     visualize=True,
     run_vizualized=0,
@@ -511,19 +685,19 @@ def data_generate_particle_field(
     mc = config.graph_model
 
     print(
-        f"generating data ... {mc.particle_model_name}"
+        f"generating data ... {mc.cell_model_name}"
     )
 
     dimension = sim.dimension
     max_radius = sim.max_radius
     min_radius = sim.min_radius
-    n_particle_types = sim.n_particle_types
-    n_particles = sim.n_particles
+    n_cell_types = sim.n_cell_types
+    n_cells = sim.n_cells
     n_nodes = sim.n_nodes
     n_nodes_per_axis = int(np.sqrt(n_nodes))
     delta_t = sim.delta_t
     n_frames = sim.n_frames
-    has_particle_dropout = tc.particle_dropout > 0
+    has_cell_dropout = tc.cell_dropout > 0
     cmap = CustomColorMap(config=config)
     dataset_name = config.dataset
     bounce = sim.bounce
@@ -565,40 +739,40 @@ def data_generate_particle_field(
 
     model, bc_pos, bc_dpos = choose_model(config=config, device=device)
 
-    if has_particle_dropout:
-        draw = np.random.permutation(np.arange(n_particles))
-        cut = int(n_particles * (1 - tc.particle_dropout))
-        particle_dropout_mask = draw[0:cut]
-        inv_particle_dropout_mask = draw[cut:]
+    if has_cell_dropout:
+        draw = np.random.permutation(np.arange(n_cells))
+        cut = int(n_cells * (1 - tc.cell_dropout))
+        cell_dropout_mask = draw[0:cut]
+        inv_cell_dropout_mask = draw[cut:]
         x_removed_list = []
     else:
-        particle_dropout_mask = np.arange(n_particles)
+        cell_dropout_mask = np.arange(n_cells)
 
     run = 0
-    n_particles = sim.n_particles
+    n_cells = sim.n_cells
 
     # zarr V3 writers for incremental saving (memory efficient)
     x_writer = ZarrSimulationWriterV3(
         path=f"graphs_data/{dataset_name}/x_list_{run}",
-        n_particles=n_particles,
+        n_cells=n_cells,
         dimension=dimension,
         time_chunks=2000,
     )
     y_writer = ZarrArrayWriter(
         path=f"graphs_data/{dataset_name}/y_list_{run}",
-        n_particles=n_particles,
+        n_cells=n_cells,
         n_features=dimension,
         time_chunks=2000,
     )
     x_mesh_writer = ZarrSimulationWriterV3(
         path=f"graphs_data/{dataset_name}/x_mesh_list_{run}",
-        n_particles=n_nodes,
+        n_cells=n_nodes,
         dimension=dimension,
         time_chunks=2000,
     )
     y_mesh_writer = ZarrArrayWriter(
         path=f"graphs_data/{dataset_name}/y_mesh_list_{run}",
-        n_particles=n_nodes,
+        n_cells=n_nodes,
         n_features=2,
         time_chunks=2000,
     )
@@ -606,11 +780,11 @@ def data_generate_particle_field(
     edge_f_p_list = []
     id_fig = 0
 
-    x = init_particlestate(config=config, scenario=scenario, ratio=ratio, device=device)
+    x = init_cellstate(config=config, scenario=scenario, ratio=ratio, device=device)
 
-    if sim.shuffle_particle_types:
-        shuffle_index = torch.randperm(n_particles, device=device)
-        x.particle_type = x.particle_type[shuffle_index]
+    if sim.shuffle_cell_types:
+        shuffle_index = torch.randperm(n_cells, device=device)
+        x.cell_type = x.cell_type[shuffle_index]
 
     mesh_state.field[mask_mesh == 0.0] = 0.0
     edge_cache = NeighborCache()
@@ -638,11 +812,11 @@ def data_generate_particle_field(
             )
 
         x_packed = x.to_packed()
-        index_particles = get_index_particles(x_packed, n_particle_types, dimension)
+        index_cells = get_index_cells(x_packed, n_cell_types, dimension)
 
         x_mesh_packed = mesh_state.clone().detach().to_packed()
         x_pf_packed = torch.concatenate((x_mesh_packed, x_packed), dim=0)
-        x_pf_state = ParticleState.from_packed(x_pf_packed, dimension)
+        x_pf_state = CellState.from_packed(x_pf_packed, dimension)
 
         with torch.no_grad():
 
@@ -656,7 +830,7 @@ def data_generate_particle_field(
                 block=2048
             )
 
-            if not has_particle_dropout:
+            if not has_cell_dropout:
                 edge_p_p_list.append(edge_index)
 
             pos_pf = x_pf_state.pos
@@ -677,7 +851,7 @@ def data_generate_particle_field(
             )
             pos_fp = to_numpy(pos_fp[:, 0])
             edge_index_fp = edge_index_fp[:, pos_fp]
-            if not has_particle_dropout:
+            if not has_cell_dropout:
                 edge_f_p_list.append(edge_index_fp)
 
             y0 = model(x, edge_index, has_field=False)
@@ -686,13 +860,13 @@ def data_generate_particle_field(
 
         # save frame to zarr
         if (it >= 0) & save:
-            if has_particle_dropout:
-                x_removed = x.subset(inv_particle_dropout_mask).detach()
+            if has_cell_dropout:
+                x_removed = x.subset(inv_cell_dropout_mask).detach()
                 x_removed_list.append(x_removed.to_packed())
-                x_sub = x.subset(particle_dropout_mask).detach()
-                x_sub.index = torch.arange(x_sub.n_particles, device=device)
+                x_sub = x.subset(cell_dropout_mask).detach()
+                x_sub.index = torch.arange(x_sub.n_cells, device=device)
                 x_writer.append_state(x_sub)
-                y_writer.append(to_numpy(y[particle_dropout_mask].clone().detach()))
+                y_writer.append(to_numpy(y[cell_dropout_mask].clone().detach()))
 
                 x_sub_packed = x_sub.to_packed()
                 distance = torch.sum(
@@ -710,7 +884,7 @@ def data_generate_particle_field(
                 edge_p_p_list.append(edge_index)
 
                 x_pf_dropout = torch.concatenate((x_mesh_packed, x_sub_packed), dim=0)
-                x_pf_dropout_state = ParticleState.from_packed(x_pf_dropout, dimension)
+                x_pf_dropout_state = CellState.from_packed(x_pf_dropout, dimension)
                 pos_pf = x_pf_dropout_state.pos
 
                 distance = torch.sum(
@@ -738,7 +912,7 @@ def data_generate_particle_field(
             x_mesh_writer.append_state(mesh_state.detach())
             y_mesh_writer.append(np.zeros((n_nodes, 2), dtype=np.float32))
 
-        # particle update
+        # cell update
         with torch.no_grad():
             if mc.prediction == "2nd_derivative":
                 x.vel = x.vel + y * delta_t
@@ -770,10 +944,10 @@ def data_generate_particle_field(
             fig, ax = default_style.figure(height=12, formatx="%.1f", formaty="%.1f")
             ax.tick_params(axis="both", which="major", pad=15)
             s_p = 20
-            for n in range(n_particle_types):
+            for n in range(n_cell_types):
                 plt.scatter(
-                    to_numpy(x.pos[index_particles[n], 1]),
-                    to_numpy(x.pos[index_particles[n], 0]),
+                    to_numpy(x.pos[index_cells[n], 1]),
+                    to_numpy(x.pos[index_cells[n], 0]),
                     s=s_p,
                     color=cmap.color(n),
                 )
@@ -792,18 +966,18 @@ def data_generate_particle_field(
         y_mesh_writer.finalize()
         print(f"generated {n_frames_written} frames total (saved as .zarr)")
 
-        if has_particle_dropout:
+        if has_cell_dropout:
             torch.save(
                 x_removed_list,
                 f"graphs_data/{dataset_name}/x_removed_list_{run}.pt",
             )
             np.save(
-                f"graphs_data/{dataset_name}/particle_dropout_mask.npy",
-                particle_dropout_mask,
+                f"graphs_data/{dataset_name}/cell_dropout_mask.npy",
+                cell_dropout_mask,
             )
             np.save(
-                f"graphs_data/{dataset_name}/inv_particle_dropout_mask.npy",
-                inv_particle_dropout_mask,
+                f"graphs_data/{dataset_name}/inv_cell_dropout_mask.npy",
+                inv_cell_dropout_mask,
             )
 
         torch.save(

@@ -1,2 +1,0 @@
-from particle_gnn.models.particle_gnn import ParticleGNN
-from particle_gnn.models.particle_field_gnn import ParticleFieldGNN

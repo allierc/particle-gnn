@@ -77,7 +77,7 @@ class ClusterConnectivity(StrEnum):
     AVERAGE = "average"
 
 
-# Sub-config schemas for particle-gnn
+# Sub-config schemas for cell-gnn
 
 
 class SimulationConfig(BaseModel):
@@ -100,18 +100,18 @@ class SimulationConfig(BaseModel):
     min_radius: float = 0.0
     max_radius: float = 0.1
 
-    n_particles: int = 1000
+    n_cells: int = 1000
     n_neurons: int = 1000
     n_input_neurons: int = 0
-    n_particles_max: int = 20000
+    n_cells_max: int = 20000
     n_edges: int = 0
     max_edges: float = 1.0e6
     n_extra_null_edges: int = 0
-    n_particle_types: int = 5
+    n_cell_types: int = 5
     n_neuron_types: int = 5
     baseline_value: float = -999.0
-    n_particle_type_distribution: list[int] = [0]
-    shuffle_particle_types: bool = False
+    n_cell_type_distribution: list[int] = [0]
+    shuffle_cell_types: bool = False
     pos_init: str = "uniform"
     dpos_init: float = 0
     len_directed_edges: int = 1
@@ -150,7 +150,7 @@ class SimulationConfig(BaseModel):
     excitation_value_map: Optional[str] = None
     excitation: str = "none"
 
-    particle_params: list[list[float]] = None
+    cell_params: list[list[float]] = None
     params_mesh: list[list[float]] = None
     func_params: list[tuple] = None
 
@@ -167,7 +167,7 @@ class SimulationConfig(BaseModel):
 class GraphModelConfig(BaseModel):
     model_config = ConfigDict(extra="ignore", protected_namespaces=())
 
-    particle_model_name: str = ""
+    cell_model_name: str = ""
     prediction: Prediction = Prediction.SECOND_DERIVATIVE
     integration: Integration = Integration.EULER
 
@@ -244,7 +244,7 @@ class TrainingConfig(BaseModel):
     clamp: float = 0
     pred_limit: float = 1.0e10
 
-    particle_dropout: float = 0
+    cell_dropout: float = 0
     n_ghosts: int = 0
     ghost_method: GhostMethod = GhostMethod.NONE
     ghost_logvar: float = -12
@@ -290,13 +290,13 @@ class TrainingConfig(BaseModel):
     recursive_parameters: list[float] = [0, 0]
 
 
-# Main config schema for particle-gnn
+# Main config schema for cell-gnn
 
 
-class ParticleGNNConfig(BaseModel):
+class CellGNNConfig(BaseModel):
     model_config = ConfigDict(extra="ignore", protected_namespaces=())
 
-    description: Optional[str] = "ParticleGNN"
+    description: Optional[str] = "CellGNN"
     dataset: str
     data_folder_name: str = "none"
     connectome_folder_name: str = "none"
@@ -311,7 +311,7 @@ class ParticleGNNConfig(BaseModel):
     def from_yaml(file_name: str):
         with open(file_name, "r") as file:
             raw_config = yaml.safe_load(file)
-        return ParticleGNNConfig(**raw_config)
+        return CellGNNConfig(**raw_config)
 
     def pretty(self):
         return yaml.dump(self, default_flow_style=False, sort_keys=False, indent=4)
@@ -319,7 +319,7 @@ class ParticleGNNConfig(BaseModel):
 
 if __name__ == "__main__":
     config_file = "../../config/arbitrary_3.yaml"
-    config = ParticleGNNConfig.from_yaml(config_file)
+    config = CellGNNConfig.from_yaml(config_file)
     print(config.pretty())
 
     print("Successfully loaded config file. Model description:", config.description)

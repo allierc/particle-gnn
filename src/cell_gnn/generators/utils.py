@@ -3,46 +3,46 @@ import torch
 from scipy.spatial import Delaunay
 from tifffile import imread
 from time import sleep
-from particle_gnn.graph_utils import compute_mesh_laplacian
+from cell_gnn.graph_utils import compute_mesh_laplacian
 
-from particle_gnn.models.registry import get_simulator_class
-from particle_gnn.particle_state import ParticleState, FieldState
-from particle_gnn.utils import choose_boundary_values, to_numpy, get_equidistant_points
+from cell_gnn.models.registry import get_simulator_class
+from cell_gnn.cell_state import CellState, FieldState
+from cell_gnn.utils import choose_boundary_values, to_numpy, get_equidistant_points
 
 
 def choose_model(config=[], W=[], device=[]):
-    particle_model_name = config.graph_model.particle_model_name
+    cell_model_name = config.graph_model.cell_model_name
     aggr_type = config.graph_model.aggr_type
-    n_particles = config.simulation.n_particles
-    n_particle_types = config.simulation.n_particle_types
+    n_cells = config.simulation.n_cells
+    n_cell_types = config.simulation.n_cell_types
 
     bc_pos, bc_dpos = choose_boundary_values(config.simulation.boundary)
 
     dimension = config.simulation.dimension
 
-    params = config.simulation.particle_params
+    params = config.simulation.cell_params
     p = torch.tensor(params, dtype=torch.float32, device=device).squeeze()
 
-    sim_cls = get_simulator_class(particle_model_name)
+    sim_cls = get_simulator_class(cell_model_name)
 
     # Per-model parameter setup
-    match particle_model_name:
+    match cell_model_name:
         case 'arbitrary_ode' | 'arbitrary_field_ode':
             if config.simulation.non_discrete_level > 0:
-                p = torch.ones(n_particle_types, 4, device=device) + torch.rand(n_particle_types, 4, device=device)
+                p = torch.ones(n_cell_types, 4, device=device) + torch.rand(n_cell_types, 4, device=device)
                 pp = []
-                n_particle_types = len(params)
-                for n in range(n_particle_types):
+                n_cell_types = len(params)
+                for n in range(n_cell_types):
                     p[n] = torch.tensor(params[n])
-                for n in range(n_particle_types):
+                for n in range(n_cell_types):
                     if n == 0:
-                        pp = p[n].repeat(n_particles // n_particle_types, 1)
+                        pp = p[n].repeat(n_cells // n_cell_types, 1)
                     else:
-                        pp = torch.cat((pp, p[n].repeat(n_particles // n_particle_types, 1)), 0)
+                        pp = torch.cat((pp, p[n].repeat(n_cells // n_cell_types, 1)), 0)
                 p = pp.clone().detach()
-                p = p + torch.randn(n_particles, 4, device=device) * config.simulation.non_discrete_level
+                p = p + torch.randn(n_cells, 4, device=device) * config.simulation.non_discrete_level
             sigma = config.simulation.sigma
-            p = p if n_particle_types == 1 else torch.squeeze(p)
+            p = p if n_cell_types == 1 else torch.squeeze(p)
             func_p = config.simulation.func_params
             embedding_step = config.simulation.n_frames // 100
             model = sim_cls(aggr_type=aggr_type, p=p, func_p=func_p, sigma=sigma, bc_dpos=bc_dpos,
@@ -51,63 +51,63 @@ def choose_model(config=[], W=[], device=[]):
             model = sim_cls(aggr_type=aggr_type, p=p, bc_dpos=bc_dpos, dimension=dimension)
         case 'gravity_ode':
             if params[0] == [-1]:
-                p = np.linspace(0.5, 5, n_particle_types)
+                p = np.linspace(0.5, 5, n_cell_types)
                 p = torch.tensor(p, device=device)
             model = sim_cls(aggr_type=aggr_type, p=p, clamp=config.training.clamp,
                             pred_limit=config.training.pred_limit, bc_dpos=bc_dpos, dimension=dimension)
         case _:
-            raise ValueError(f'Unknown particle model: {particle_model_name}')
+            raise ValueError(f'Unknown cell model: {cell_model_name}')
 
     return model, bc_pos, bc_dpos
 
 
-def init_particlestate(config=[], scenario='none', ratio=1, device=[]):
-    """initialize particle state as a ParticleState dataclass."""
+def init_cellstate(config=[], scenario='none', ratio=1, device=[]):
+    """initialize cell state as a CellState dataclass."""
     simulation_config = config.simulation
-    n_particles = simulation_config.n_particles * ratio
-    n_particle_types = simulation_config.n_particle_types
+    n_cells = simulation_config.n_cells * ratio
+    n_cell_types = simulation_config.n_cell_types
     dimension = simulation_config.dimension
 
     dpos_init = simulation_config.dpos_init
 
     if simulation_config.boundary == 'periodic':
-        pos = torch.rand(n_particles, dimension, device=device)
-        if n_particles <= 10:
+        pos = torch.rand(n_cells, dimension, device=device)
+        if n_cells <= 10:
             pos = pos * 0.1 + 0.45
-        elif n_particles <= 100:
+        elif n_cells <= 100:
             pos = pos * 0.2 + 0.4
-        elif n_particles <= 500:
+        elif n_cells <= 500:
             pos = pos * 0.5 + 0.25
     else:
-        pos = torch.randn(n_particles, dimension, device=device) * 0.5
+        pos = torch.randn(n_cells, dimension, device=device) * 0.5
 
-    vel = dpos_init * torch.randn((n_particles, dimension), device=device)
+    vel = dpos_init * torch.randn((n_cells, dimension), device=device)
     vel = torch.clamp(vel, min=-torch.std(vel), max=+torch.std(vel))
 
-    particle_type = torch.zeros(int(n_particles / n_particle_types), device=device)
-    for n in range(1, n_particle_types):
-        particle_type = torch.cat((particle_type, n * torch.ones(int(n_particles / n_particle_types), device=device)), 0)
-    if particle_type.shape[0] < n_particles:
-        particle_type = torch.cat((particle_type, n * torch.ones(n_particles - particle_type.shape[0], device=device)), 0)
+    cell_type = torch.zeros(int(n_cells / n_cell_types), device=device)
+    for n in range(1, n_cell_types):
+        cell_type = torch.cat((cell_type, n * torch.ones(int(n_cells / n_cell_types), device=device)), 0)
+    if cell_type.shape[0] < n_cells:
+        cell_type = torch.cat((cell_type, n * torch.ones(n_cells - cell_type.shape[0], device=device)), 0)
     if config.simulation.non_discrete_level > 0:
-        particle_type = torch.tensor(np.arange(n_particles), device=device)
+        cell_type = torch.tensor(np.arange(n_cells), device=device)
 
-    field = torch.cat((torch.randn((n_particles, 1), device=device) * 5,
-                        0.1 * torch.randn((n_particles, 1), device=device)), 1)
+    field = torch.cat((torch.randn((n_cells, 1), device=device) * 5,
+                        0.1 * torch.randn((n_cells, 1), device=device)), 1)
 
     if 'uniform' in scenario:
-        particle_type = torch.ones(n_particles, device=device) * int(scenario.split()[-1])
+        cell_type = torch.ones(n_cells, device=device) * int(scenario.split()[-1])
     if 'stripes' in scenario:
-        l = n_particles // n_particle_types
-        for n in range(n_particle_types):
+        l = n_cells // n_cell_types
+        for n in range(n_cell_types):
             index = np.arange(n * l, (n + 1) * l)
-            pos[index, 1:2] = torch.rand(l, 1, device=device) * (1 / n_particle_types) + n / n_particle_types
+            pos[index, 1:2] = torch.rand(l, 1, device=device) * (1 / n_cell_types) + n / n_cell_types
 
-    return ParticleState(
-        index=torch.arange(n_particles, device=device),
+    return CellState(
+        index=torch.arange(n_cells, device=device),
         pos=pos,
         vel=vel,
-        particle_type=particle_type.long(),
+        cell_type=cell_type.long(),
         field=field,
     )
 
@@ -184,7 +184,7 @@ def init_mesh(config, device):
         index=torch.arange(n_nodes, device=device),
         pos=pos,
         vel=torch.zeros((n_nodes, 2), device=device),
-        particle_type=torch.zeros(n_nodes, device=device).long(),
+        cell_type=torch.zeros(n_nodes, device=device).long(),
         field=torch.zeros((n_nodes, 2), device=device),
     )
 

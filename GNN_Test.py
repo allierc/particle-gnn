@@ -1,5 +1,5 @@
 """
-Regression test for particle-gnn training pipeline.
+Regression test for cell-gnn training pipeline.
 
 Runs generate/train/test for one or all configs, compares metrics against
 reference values, optionally calls Claude CLI for qualitative assessment,
@@ -35,8 +35,8 @@ import sys
 import time
 from datetime import datetime
 
-from particle_gnn.config import ParticleGNNConfig
-from particle_gnn.utils import set_device, add_pre_folder
+from cell_gnn.config import CellGNNConfig
+from cell_gnn.utils import set_device, add_pre_folder
 
 
 ALL_CONFIGS = ['arbitrary', 'boids', 'gravity']
@@ -47,7 +47,7 @@ ALL_CONFIGS = ['arbitrary', 'boids', 'gravity']
 # ------------------------------------------------------------------ #
 
 def parse_results_log(path):
-    """Parse results.log written by data_test_particle."""
+    """Parse results.log written by data_test_cell."""
     if not os.path.exists(path):
         print(f"  warning: {path} not found")
         return {}
@@ -171,7 +171,7 @@ def format_comparison_table(rows):
 
 def run_generate(config, device):
     """Run data generation (same as GNN_Main.py -o generate)."""
-    from particle_gnn.generators.graph_data_generator import data_generate
+    from cell_gnn.generators.graph_data_generator import data_generate
     data_generate(
         config, device=device, visualize=True, run_vizualized=0,
         style="color", alpha=1, erase=True, save=True, step=10, timer=False,
@@ -180,25 +180,25 @@ def run_generate(config, device):
 
 def run_training_local(config, device):
     """Run training locally (same as GNN_Main.py -o train)."""
-    from particle_gnn.models.graph_trainer import data_train
+    from cell_gnn.models.graph_trainer import data_train
     data_train(config=config, erase=True, best_model=None, device=device)
 
 
 def run_test_local(config, device):
     """Run test locally (same as GNN_Main.py -o test)."""
-    from particle_gnn.models.graph_trainer import data_test
+    from cell_gnn.models.graph_trainer import data_test
     data_test(
         config=config, visualize=True, style="color name",
         verbose=False, best_model='best', run=0, test_mode="",
         sample_embedding=False, step=20, device=device,
-        particle_of_interest=0,
+        cell_of_interest=0,
     )
 
 
 def run_training_cluster(config_name, root_dir, log_dir):
     """Submit training to cluster via SSH + bsub."""
     cluster_home = "/groups/saalfeld/home/allierc"
-    cluster_root_dir = f"{cluster_home}/Graph/particle-gnn"
+    cluster_root_dir = f"{cluster_home}/Graph/cell-gnn"
 
     cluster_train_cmd = f"python GNN_Main.py -o train {config_name} --n_epochs 1 --erase"
     cluster_log = f"{cluster_root_dir}/log/{config_name}/{config_name}/cluster_train.log"
@@ -243,7 +243,7 @@ def run_training_cluster(config_name, root_dir, log_dir):
 def run_test_cluster(config_name, root_dir, log_dir):
     """Submit test to cluster via SSH + bsub."""
     cluster_home = "/groups/saalfeld/home/allierc"
-    cluster_root_dir = f"{cluster_home}/Graph/particle-gnn"
+    cluster_root_dir = f"{cluster_home}/Graph/cell-gnn"
 
     cluster_cmd = f"python GNN_Main.py -o test {config_name} best"
     cluster_log = f"{cluster_root_dir}/log/{config_name}/{config_name}/cluster_test.log"
@@ -291,7 +291,7 @@ def run_test_cluster(config_name, root_dir, log_dir):
 
 def get_claude_assessment(combined_table, root_dir):
     """Call Claude CLI to generate a qualitative assessment."""
-    prompt = f"""You are reviewing a regression test for the particle-gnn training pipeline.
+    prompt = f"""You are reviewing a regression test for the cell-gnn training pipeline.
 
 Compare the current training results against the reference baseline and provide a brief assessment.
 
@@ -469,7 +469,7 @@ def save_reference(ref_path, config_tables_data):
 # ------------------------------------------------------------------ #
 
 def main():
-    parser = argparse.ArgumentParser(description='Regression test for particle-gnn')
+    parser = argparse.ArgumentParser(description='Regression test for cell-gnn')
     parser.add_argument('--config', type=str, default='all',
                         help='Config name or "all" (default: all)')
     parser.add_argument('--cluster', action='store_true',
@@ -526,7 +526,7 @@ def main():
 
         # Load config (same pattern as GNN_Main.py)
         config_file, pre_folder = add_pre_folder(config_name)
-        config = ParticleGNNConfig.from_yaml(f"{config_root}/{config_file}.yaml")
+        config = CellGNNConfig.from_yaml(f"{config_root}/{config_file}.yaml")
         config.dataset = pre_folder + config.dataset
         config.config_file = pre_folder + config_name
 

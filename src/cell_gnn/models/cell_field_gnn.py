@@ -1,23 +1,23 @@
 import numpy as np
 import torch
 import torch.nn as nn
-from particle_gnn.models.MLP import MLP
-from particle_gnn.utils import to_numpy
-from particle_gnn.models import Siren_Network
-from particle_gnn.particle_state import ParticleState
-from particle_gnn.graph_utils import remove_self_loops, scatter_aggregate
-from particle_gnn.models.registry import register_model
+from cell_gnn.models.MLP import MLP
+from cell_gnn.utils import to_numpy
+from cell_gnn.models import Siren_Network
+from cell_gnn.cell_state import CellState
+from cell_gnn.graph_utils import remove_self_loops, scatter_aggregate
+from cell_gnn.models.registry import register_model
 
 
 @register_model("arbitrary_field_ode", "boids_field_ode")
-class ParticleFieldGNN(nn.Module):
+class CellFieldGNN(nn.Module):
     """Interaction Network as proposed in this paper:
     https://proceedings.neurips.cc/paper/2016/hash/3147da8ab4a0437c15ef51a5cc7f2dc4-Abstract.html"""
 
     """
-    Model learning the acceleration of particles as a function of their relative distance and relative velocities.
+    Model learning the acceleration of cells as a function of their relative distance and relative velocities.
     The interaction function is defined by a MLP self.lin_edge
-    The particle embedding is defined by a table self.a
+    The cell embedding is defined by a table self.a
 
     Inputs
     ----------
@@ -26,7 +26,7 @@ class ParticleFieldGNN(nn.Module):
     Returns
     -------
     pred : float
-        the acceleration of the particles (dimension 2)
+        the acceleration of the cells (dimension 2)
     """
 
     def __init__(self, config, device, aggr_type=None, bc_dpos=None, dimension=2):
@@ -44,7 +44,7 @@ class ParticleFieldGNN(nn.Module):
         self.output_size = model_config.output_size
         self.hidden_dim = model_config.hidden_dim
         self.n_layers = model_config.n_layers
-        self.n_particles = simulation_config.n_particles
+        self.n_cells = simulation_config.n_cells
         self.n_nodes = simulation_config.n_nodes
         self.n_nodes_per_axis = int(np.sqrt(self.n_nodes))
         self.max_radius = simulation_config.max_radius
@@ -57,7 +57,7 @@ class ParticleFieldGNN(nn.Module):
         self.n_layers_update = model_config.n_layers_update
         self.hidden_dim_update = model_config.hidden_dim_update
         self.sigma = simulation_config.sigma
-        self.model = model_config.particle_model_name
+        self.model = model_config.cell_model_name
         self.bc_dpos = bc_dpos
         self.n_ghosts = int(train_config.n_ghosts)
         self.dimension = dimension
@@ -67,14 +67,14 @@ class ParticleFieldGNN(nn.Module):
                                 hidden_size=self.hidden_dim, device=self.device)
 
         self.a = nn.Parameter(
-            torch.tensor(np.ones((self.n_dataset, int(self.n_particles) + self.n_ghosts, self.embedding_dim)), device=self.device,
+            torch.tensor(np.ones((self.n_dataset, int(self.n_cells) + self.n_ghosts, self.embedding_dim)), device=self.device,
                          requires_grad=True, dtype=torch.float32))
 
         if self.update_type != 'none':
             self.lin_update = MLP(input_size=self.output_size + self.embedding_dim + self.dimension, output_size=self.output_size,
                                   nlayers=self.n_layers_update, hidden_size=self.hidden_dim_update, device=self.device)
 
-    def forward(self, state: ParticleState, edge_index: torch.Tensor, data_id=[], training=[], phi=[], has_field=False):
+    def forward(self, state: CellState, edge_index: torch.Tensor, data_id=[], training=[], phi=[], has_field=False):
 
         self.data_id = data_id
         self.cos_phi = torch.cos(phi)
@@ -91,27 +91,27 @@ class ParticleFieldGNN(nn.Module):
         else:
             field = torch.ones_like(state.field)
 
-        particle_id = state.index.unsqueeze(-1)
+        cell_id = state.index.unsqueeze(-1)
 
         # Gather features for source (j) and target (i) nodes
         src, dst = edge_index[1], edge_index[0]
         pos_i, pos_j = pos[dst], pos[src]
         d_pos_i, d_pos_j = d_pos[dst], d_pos[src]
-        particle_id_i, particle_id_j = particle_id[dst], particle_id[src]
+        cell_id_i, cell_id_j = cell_id[dst], cell_id[src]
         field_j = field[src]
 
-        messages = self.message(pos_i, pos_j, d_pos_i, d_pos_j, particle_id_i, particle_id_j, field_j)
+        messages = self.message(pos_i, pos_j, d_pos_i, d_pos_j, cell_id_i, cell_id_j, field_j)
 
         n_nodes = pos.shape[0]
         pred = scatter_aggregate(messages, dst, n_nodes, self.aggr_type)
 
         if self.update_type == 'linear':
-            embedding = self.a[self.data_id, particle_id, :]
+            embedding = self.a[self.data_id, cell_id, :]
             pred = self.lin_update(torch.cat((pred, d_pos, embedding), dim=-1))
 
         return pred
 
-    def message(self, pos_i, pos_j, d_pos_i, d_pos_j, particle_id_i, particle_id_j, field_j):
+    def message(self, pos_i, pos_j, d_pos_i, d_pos_j, cell_id_i, cell_id_j, field_j):
         # squared distance
         r = torch.sqrt(torch.sum(self.bc_dpos(pos_j - pos_i) ** 2, dim=1)) / self.max_radius
         delta_pos = self.bc_dpos(pos_j - pos_i) / self.max_radius
@@ -138,7 +138,7 @@ class ParticleFieldGNN(nn.Module):
             dpos_y_j = new_dpos_y_j
 
 
-        embedding_i = self.a[self.data_id, to_numpy(particle_id_i), :].squeeze()
+        embedding_i = self.a[self.data_id, to_numpy(cell_id_i), :].squeeze()
 
         match self.model:
 
