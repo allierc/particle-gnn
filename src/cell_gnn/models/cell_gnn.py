@@ -109,9 +109,9 @@ class CellGNN(nn.Module):
         if has_field:
             field = state.field
         else:
-            field = torch.ones_like(state.field)
+            field = torch.ones(state.n_cells, 1, dtype=state.pos.dtype, device=state.pos.device)
 
-        derivatives = torch.zeros_like(state.field)
+        derivatives = torch.zeros(state.n_cells, 1, dtype=state.pos.dtype, device=state.pos.device)
 
         pos = state.pos
         d_pos = state.vel / self.vnorm
