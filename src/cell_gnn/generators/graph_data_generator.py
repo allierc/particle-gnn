@@ -55,8 +55,20 @@ def data_generate(
         print("watch out: data already generated")
         # return
 
+    has_embryo_data = 'embryo' in config.data_folder_name
     has_external_data = config.data_folder_name != "none"
     has_cell_field = "field_ode" in config.graph_model.cell_model_name
+
+    if has_embryo_data:
+        from cell_gnn.generators.embryo_loader import load_from_embryo
+        load_from_embryo(
+            config,
+            visualize=visualize,
+            step=step,
+            device=device,
+            save=save,
+        )
+        return
 
     if has_external_data:
         load_from_data(

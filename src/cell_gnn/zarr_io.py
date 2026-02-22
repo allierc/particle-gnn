@@ -18,7 +18,7 @@ import numpy as np
 import tensorstore as ts
 
 if TYPE_CHECKING:
-    from cell_gnn.cell_state import CellState, CellTimeSeries, FieldState, FieldTimeSeries
+    from cell_gnn.cell_state import CellState, CellTimeSeries, FieldState, FieldTimeSeries, VertexTimeSeries
 
 
 class ZarrArrayWriter:
@@ -429,6 +429,10 @@ def _load_zarr_v3(path: Path, fields=None) -> CellTimeSeries:
     edge_list = load_edge_index(path)
     kwargs['edge_index'] = edge_list
 
+    # ragged field: vertex_indices (list of (N_t, max_V_per_cell_t) tensors)
+    vi_list = load_vertex_indices(path)
+    kwargs['vertex_indices'] = vi_list
+
     return CellTimeSeries(**kwargs)
 
 
@@ -558,6 +562,72 @@ def load_edge_index(path: str | Path) -> list | None:
     if pt_path.exists():
         return torch.load(pt_path, map_location='cpu', weights_only=False)
     return None
+
+
+def save_vertex_indices(path: str | Path, vi_list: list) -> None:
+    """save per-frame vertex_indices list as .pt file.
+
+    args:
+        path: directory path (e.g. graphs_data/embryo/x_list_0)
+        vi_list: list of (N_t, max_V_per_cell_t) long tensors, -1 padded
+    """
+    import torch
+    path = Path(path)
+    path.mkdir(parents=True, exist_ok=True)
+    torch.save(vi_list, path / 'vertex_indices.pt')
+
+
+def load_vertex_indices(path: str | Path) -> list | None:
+    """load per-frame vertex_indices list from .pt file, if it exists.
+
+    returns:
+        list of (N_t, max_V_per_cell_t) long tensors, or None
+    """
+    import torch
+    pt_path = Path(path) / 'vertex_indices.pt'
+    if pt_path.exists():
+        return torch.load(pt_path, map_location='cpu', weights_only=False)
+    return None
+
+
+def save_vertex_timeseries(path: str | Path, vts: VertexTimeSeries) -> None:
+    """save VertexTimeSeries as .pt files.
+
+    saves:
+        vertex_pos.pt — list of (V_t, dim) float tensors
+        vertex_edge_index.pt — list of (2, E_v_t) long tensors
+    """
+    import torch
+    path = Path(path)
+    path.mkdir(parents=True, exist_ok=True)
+    if vts.pos is not None:
+        torch.save(vts.pos, path / 'vertex_pos.pt')
+    if vts.edge_index is not None:
+        torch.save(vts.edge_index, path / 'vertex_edge_index.pt')
+
+
+def load_vertex_timeseries(path: str | Path) -> VertexTimeSeries | None:
+    """load VertexTimeSeries from .pt files, if they exist.
+
+    returns:
+        VertexTimeSeries or None if no vertex data found
+    """
+    import torch
+    from cell_gnn.cell_state import VertexTimeSeries
+
+    path = Path(path)
+    vp_path = path / 'vertex_pos.pt'
+    ve_path = path / 'vertex_edge_index.pt'
+
+    if not vp_path.exists():
+        return None
+
+    pos = torch.load(vp_path, map_location='cpu', weights_only=False)
+    edge_index = None
+    if ve_path.exists():
+        edge_index = torch.load(ve_path, map_location='cpu', weights_only=False)
+
+    return VertexTimeSeries(pos=pos, edge_index=edge_index)
 
 
 def load_raw_array(path: str | Path) -> np.ndarray:

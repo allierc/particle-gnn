@@ -141,8 +141,9 @@ class CellState:
     cell_type: torch.Tensor | None = None   # (N,) long — type label
     field: torch.Tensor | None = None           # (N, F) float32 — field / features
     edge_index: torch.Tensor | None = None      # (2, E) long — Delaunay adjacency
+    vertex_indices: torch.Tensor | None = None  # (N, max_V_per_cell) long — ordered vertex ring, -1 padded
 
-    # fields that participate in per-cell indexing (edge_index excluded — variable size, (2,E) not (N,...))
+    # fields that participate in per-cell indexing (edge_index, vertex_indices excluded — variable/special size)
     _NODE_FIELDS = {'index', 'pos', 'vel', 'cell_type', 'field'}
 
     @property
@@ -214,6 +215,7 @@ class CellState:
         per-cell fields are indexed directly.
         edge_index is filtered to keep only edges between selected cells,
         then remapped to the new [0, len(ids)) index space.
+        vertex_indices is indexed per-cell (no remapping — vertex IDs are global).
         """
         kwargs = {}
         for f in dc_fields(self):
@@ -222,6 +224,8 @@ class CellState:
                 kwargs[f.name] = None
             elif f.name == 'edge_index':
                 kwargs[f.name] = _subset_edges(val, ids)
+            elif f.name in self._NODE_FIELDS or f.name == 'vertex_indices':
+                kwargs[f.name] = val[ids]
             else:
                 kwargs[f.name] = val[ids]
         return CellState(**kwargs)
@@ -262,6 +266,10 @@ class CellTimeSeries:
     # ragged dynamic — edge count varies per frame, stored as list of (2, E_t) tensors
     edge_index: list[torch.Tensor] | None = None
 
+    # ragged dynamic — vertex ring per cell varies per frame
+    # list of (N_t, max_V_per_cell_t) long tensors, -1 padded
+    vertex_indices: list[torch.Tensor] | None = None
+
     @property
     def n_frames(self) -> int:
         """infer T from the first non-None dynamic field."""
@@ -300,17 +308,22 @@ class CellTimeSeries:
                 return val.device
         raise ValueError("CellTimeSeries has no populated fields")
 
+    # ragged list fields — stored as list of tensors, not regular (T, N, ...) arrays
+    _RAGGED_FIELDS = {'edge_index', 'vertex_indices'}
+
     def frame(self, t: int) -> CellState:
         """extract single-frame CellState at time t.
 
         static fields are shared (not cloned).
         dynamic fields are cloned so the caller can modify them.
-        edge_index (ragged) is extracted by list index.
+        ragged list fields (edge_index, vertex_indices) are extracted by list index.
         """
         kwargs = {}
         for f in dc_fields(self):
-            if f.name == 'edge_index':
-                continue  # handled below
+            if f.name in self._RAGGED_FIELDS:
+                val = getattr(self, f.name)
+                kwargs[f.name] = val[t] if val is not None else None
+                continue
             val = getattr(self, f.name)
             if val is None:
                 kwargs[f.name] = None
@@ -318,34 +331,28 @@ class CellTimeSeries:
                 kwargs[f.name] = val[t].clone()
             else:
                 kwargs[f.name] = val
-        # ragged field
-        if self.edge_index is not None:
-            kwargs['edge_index'] = self.edge_index[t]
-        else:
-            kwargs['edge_index'] = None
         return CellState(**kwargs)
 
     def to(self, device: torch.device) -> CellTimeSeries:
         """move all non-None tensors to device."""
         kwargs = {}
         for f in dc_fields(self):
-            if f.name == 'edge_index':
+            if f.name in self._RAGGED_FIELDS:
+                val = getattr(self, f.name)
+                kwargs[f.name] = [x.to(device) for x in val] if val is not None else None
                 continue
             kwargs[f.name] = _apply(getattr(self, f.name), lambda t: t.to(device))
-        if self.edge_index is not None:
-            kwargs['edge_index'] = [ei.to(device) for ei in self.edge_index]
-        else:
-            kwargs['edge_index'] = None
         return CellTimeSeries(**kwargs)
 
     def subset_cells(self, ids) -> CellTimeSeries:
         """select a subset of cells by index.
 
         edge_index lists are filtered and remapped per frame.
+        vertex_indices lists are indexed per cell (vertex IDs are global).
         """
         kwargs = {}
         for f in dc_fields(self):
-            if f.name == 'edge_index':
+            if f.name in self._RAGGED_FIELDS:
                 continue
             val = getattr(self, f.name)
             if val is None:
@@ -358,6 +365,10 @@ class CellTimeSeries:
             kwargs['edge_index'] = [_subset_edges(ei, ids) for ei in self.edge_index]
         else:
             kwargs['edge_index'] = None
+        if self.vertex_indices is not None:
+            kwargs['vertex_indices'] = [vi[ids] for vi in self.vertex_indices]
+        else:
+            kwargs['vertex_indices'] = None
         return CellTimeSeries(**kwargs)
 
     @classmethod
@@ -582,3 +593,92 @@ class FieldTimeSeries:
             result.field = stacked[:, :, field_start:]
 
         return result
+
+
+# ---------------------------------------------------------------------------
+# Vertex state — single frame and timeseries for the Voronoi vertex graph
+# ---------------------------------------------------------------------------
+
+@dataclass
+class VertexState:
+    """single-frame vertex state for V vertices.
+
+    represents the Voronoi vertex graph (graph V in the MultiCell dual-graph
+    formulation).  vertices are the learnable degrees of freedom in a vertex
+    model — cell centroids are derived from vertex positions.
+    """
+
+    pos: torch.Tensor | None = None             # (V, dim) float32 — vertex positions
+    edge_index: torch.Tensor | None = None      # (2, E_v) long — vertex-vertex mesh edges
+
+    @property
+    def n_vertices(self) -> int:
+        if self.pos is not None:
+            return self.pos.shape[0]
+        raise ValueError("VertexState has no populated fields")
+
+    @property
+    def dimension(self) -> int:
+        if self.pos is not None:
+            return self.pos.shape[1]
+        raise ValueError("cannot infer dimension: pos is None")
+
+    @property
+    def device(self) -> torch.device:
+        if self.pos is not None:
+            return self.pos.device
+        if self.edge_index is not None:
+            return self.edge_index.device
+        raise ValueError("VertexState has no populated fields")
+
+    def to(self, device: torch.device) -> VertexState:
+        return VertexState(
+            pos=_apply(self.pos, lambda t: t.to(device)),
+            edge_index=_apply(self.edge_index, lambda t: t.to(device)),
+        )
+
+    def clone(self) -> VertexState:
+        return VertexState(
+            pos=_apply(self.pos, lambda t: t.clone()),
+            edge_index=_apply(self.edge_index, lambda t: t.clone()),
+        )
+
+    def detach(self) -> VertexState:
+        return VertexState(
+            pos=_apply(self.pos, lambda t: t.detach()),
+            edge_index=_apply(self.edge_index, lambda t: t.detach()),
+        )
+
+
+@dataclass
+class VertexTimeSeries:
+    """full simulation timeseries for Voronoi vertices.
+
+    both pos and edge_index are ragged (vertex count and edge count change
+    per frame as cells divide / invaginate), so they are stored as lists.
+    """
+
+    # ragged per-frame lists
+    pos: list[torch.Tensor] | None = None             # list of (V_t, dim) float32
+    edge_index: list[torch.Tensor] | None = None      # list of (2, E_v_t) long
+
+    @property
+    def n_frames(self) -> int:
+        if self.pos is not None:
+            return len(self.pos)
+        if self.edge_index is not None:
+            return len(self.edge_index)
+        raise ValueError("VertexTimeSeries has no populated fields")
+
+    def frame(self, t: int) -> VertexState:
+        """extract single-frame VertexState at time t."""
+        return VertexState(
+            pos=self.pos[t] if self.pos is not None else None,
+            edge_index=self.edge_index[t] if self.edge_index is not None else None,
+        )
+
+    def to(self, device: torch.device) -> VertexTimeSeries:
+        return VertexTimeSeries(
+            pos=[p.to(device) for p in self.pos] if self.pos is not None else None,
+            edge_index=[e.to(device) for e in self.edge_index] if self.edge_index is not None else None,
+        )
