@@ -195,11 +195,14 @@ class CellGNN(nn.Module):
         out = self.lin_edge(in_features)
 
         if self.training==False:
-            pos = torch.argwhere(dst == self.cell_of_interest)
-            if pos.numel()>0:
-                self.msg = out[pos[:,0]]
+            if out.shape[0] == 0:
+                self.msg = torch.zeros(1, out.shape[1], device=out.device) if out.dim() > 1 else torch.zeros(1, device=out.device)
             else:
-                self.msg = out[0]
+                pos = torch.argwhere(dst == self.cell_of_interest)
+                if pos.numel()>0:
+                    self.msg = out[pos[:,0]]
+                else:
+                    self.msg = out[0]
 
         return out
 

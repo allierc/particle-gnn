@@ -50,6 +50,9 @@ def scatter_aggregate(
     Returns:
         (N, D) aggregated node features.
     """
+    if messages.shape[0] == 0:
+        D = messages.shape[1] if messages.dim() > 1 else 1
+        return torch.zeros(num_nodes, D, dtype=messages.dtype, device=messages.device)
     D = messages.shape[1]
     out = torch.zeros(num_nodes, D, dtype=messages.dtype, device=messages.device)
     idx = target_index.unsqueeze(1).expand_as(messages)
