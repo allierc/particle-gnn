@@ -10,23 +10,63 @@ from cell_gnn.models.registry import register_model
 
 @register_model("arbitrary_ode", "boids_ode", "gravity_ode")
 class CellGNN(nn.Module):
-    """Interaction Network as proposed in this paper:
-    https://proceedings.neurips.cc/paper/2016/hash/3147da8ab4a0437c15ef51a5cc7f2dc4-Abstract.html"""
+    """Interaction Network for cell dynamics — learns pairwise interaction from relative positions/velocities.
 
+    acceleration_i = aggr_j(lin_edge(delta_pos, delta_vel, a_i, a_j)) * ynorm
     """
-    Model learning the acceleration of cells as a function of their relative distance and relative velocities.
-    The interaction function is defined by a MLP self.lin_edge
-    The cell embedding is defined by a table self.a
 
-    Inputs
-    ----------
-    data : a torch_geometric.data object
-
-    Returns
-    -------
-    pred : float
-        the acceleration of the cells (dimension 2)
-    """
+    PARAMS_DOC = {
+        "model_name": "CellGNN",
+        "description": "GNN for cell dynamics — learns pairwise interaction from relative positions/velocities. "
+                       "acceleration_i = aggr_j(lin_edge(delta_pos, delta_vel, a_i, a_j)) * ynorm",
+        "equations": {
+            "message_arbitrary": "msg_j = lin_edge(delta_pos_ij / max_r, r / max_r, a_i)",
+            "message_boids": "msg_j = lin_edge(delta_pos_ij / max_r, r / max_r, dpos_i / vnorm, dpos_j / vnorm, a_i)",
+            "message_gravity": "msg_j = lin_edge(delta_pos_ij / max_r, r / max_r, dpos_i / vnorm, dpos_j / vnorm, a_j)",
+            "update_none": "acceleration = aggr(messages) * ynorm",
+            "update_mlp": "acceleration = lin_phi(aggr(messages), a_i, dpos / vnorm) * ynorm",
+        },
+        "graph_model_config": {
+            "lin_edge (MLP0)": {
+                "description": "Pairwise interaction function — force from relative state",
+                "input_size": {
+                    "arbitrary_ode": "dimension + 1 + embedding_dim  (delta_pos, r, a_i)",
+                    "boids_ode": "dimension + 1 + 2*dimension + embedding_dim  (delta_pos, r, dpos_i, dpos_j, a_i)",
+                    "gravity_ode": "dimension + 1 + 2*dimension + embedding_dim  (delta_pos, r, dpos_i, dpos_j, a_j)",
+                },
+                "output_size": "dimension (force vector)",
+                "hidden_dim": {"typical_range": [64, 256], "default": 128},
+                "n_layers": {"typical_range": [3, 7], "default": 5},
+            },
+            "lin_phi (MLP1, update_type='mlp')": {
+                "description": "Node update — acceleration from aggregated messages + embedding + velocity",
+                "input_size_update": "output_size + embedding_dim + dimension",
+                "hidden_dim_update": {"typical_range": [32, 128], "default": 64},
+                "n_layers_update": {"typical_range": [2, 5], "default": 3},
+            },
+            "embedding a": {
+                "shape": "(n_datasets, n_cells + n_ghosts, embedding_dim)",
+                "description": "Learned per-cell embedding encoding cell type",
+            },
+        },
+        "training_config": {
+            "learning_rate_start": {"description": "LR for MLP params", "typical_range": [1e-5, 1e-3]},
+            "learning_rate_embedding_start": {"description": "LR for embedding", "typical_range": [1e-6, 1e-4]},
+            "batch_size": {"description": "Frames per gradient step", "typical_range": [1, 16]},
+            "data_augmentation_loop": {"description": "Iterations = n_frames * aug_loop / batch_size"},
+            "coeff_edge_diff": {"description": "Same-type edge similarity penalty", "typical_range": [0, 100]},
+            "coeff_edge_norm": {"description": "Monotonicity penalty on lin_edge", "typical_range": [0, 10]},
+            "recursive_training": {"description": "Enable multi-step unrolling during training"},
+            "recursive_loop": {"description": "Number of recurrent unroll steps", "typical_range": [0, 8]},
+        },
+        "simulation_config": {
+            "n_cells": "Number of cells",
+            "n_cell_types": "Number of distinct cell types",
+            "max_radius": "Interaction radius for edge construction",
+            "delta_t": "Integration time step",
+            "boundary": "Boundary condition: periodic, no, wall",
+        },
+    }
 
     def __init__(self, config, device, aggr_type=None, bc_dpos=None, dimension=2):
 

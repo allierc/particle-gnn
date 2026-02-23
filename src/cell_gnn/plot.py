@@ -282,7 +282,9 @@ def analyze_edge_function(rr=[], vizualize=False, config=None, model_MLP=[], mod
 # --------------------------------------------------------------------------- #
 
 def plot_training(config, pred, gt, log_dir, epoch, N, x, index_cells, n_cells, n_cell_types, model, n_nodes, n_node_types, index_nodes, dataset_num, ynorm, cmap, axis, device):
+    """Plot training diagnostics. Returns psi R² mean or None if unavailable."""
 
+    psi_r2 = None
     style = default_style
     simulation_config = config.simulation
     train_config = config.training
@@ -343,7 +345,7 @@ def plot_training(config, pred, gt, log_dir, epoch, N, x, index_cells, n_cells, 
     style.montage_xlabel(ax, r'$a_0$')
     style.montage_ylabel(ax, r'$a_1$')
     plt.tight_layout()
-    style.savefig(fig, f"./{log_dir}/tmp_training/embedding/{epoch}_{N}.tif")
+    style.savefig(fig, f"./{log_dir}/tmp_training/embedding/{epoch}_{N}.png")
 
     # --- Pred vs true scatter ---
     fig, ax = style.figure()
@@ -352,7 +354,7 @@ def plot_training(config, pred, gt, log_dir, epoch, N, x, index_cells, n_cells, 
     style.xlabel(ax, 'true value')
     style.ylabel(ax, 'pred value')
     plt.tight_layout()
-    style.savefig(fig, f"./{log_dir}/tmp_training/prediction/{epoch}_{N}.tif")
+    style.savefig(fig, f"./{log_dir}/tmp_training/prediction/{epoch}_{N}.png")
 
     # --- Interaction function curves (vectorized) ---
     if n_runs > 10:
@@ -411,10 +413,11 @@ def plot_training(config, pred, gt, log_dir, epoch, N, x, index_cells, n_cells, 
         colors = ['b'] * len(segments)
         lc = mcoll.LineCollection(segments, colors=colors, linewidths=2, alpha=0.1)
         ax.add_collection(lc)
+        ax.axhline(y=0, color='grey', linewidth=0.5, linestyle='-')
         ax.autoscale_view()
 
         plt.tight_layout()
-        style.savefig(fig, f"./{log_dir}/tmp_training/function/MLP1/function_{epoch}_{N}.tif")
+        style.savefig(fig, f"./{log_dir}/tmp_training/function/MLP1/function_{epoch}_{N}.png")
     else:
         match model_config.cell_model_name:
 
@@ -459,17 +462,24 @@ def plot_training(config, pred, gt, log_dir, epoch, N, x, index_cells, n_cells, 
                 if r2_values is not None:
                     valid = r2_values[~np.isnan(r2_values)]
                     if len(valid) > 0:
-                        r2_mean, r2_std = valid.mean(), valid.std()
-                        print(f'  psi R²: {r2_mean:.4f} +/- {r2_std:.4f}  (n={len(valid)})')
-                        style.montage_annotate(ax, f'R²={r2_mean:.3f}±{r2_std:.3f}',
-                                               (0.02, 0.02), verticalalignment='bottom')
+                        psi_r2 = float(valid.mean())
+                        ax.text(0.02, 0.98, f'R²={psi_r2:.3f}±{valid.std():.3f}',
+                                transform=ax.transAxes, verticalalignment='top',
+                                fontsize=style.font_size,
+                                color=style.foreground)
 
                 if model_config.cell_model_name == 'gravity_ode':
                     plt.xlim([0, 0.02])
+                if true_curves:
+                    all_true = np.concatenate(list(true_curves.values()))
+                    ymin, ymax = all_true.min(), all_true.max()
+                    margin = (ymax - ymin) * 0.1
+                    ax.set_ylim([ymin - margin, ymax + margin])
+                ax.axhline(y=0, color='grey', linewidth=0.5, linestyle='-')
                 style.montage_xlabel(ax, r'$r$')
                 style.montage_ylabel(ax, r'$\psi(r)$')
                 plt.tight_layout()
-                style.savefig(fig, f"./{log_dir}/tmp_training/function/MLP1/function_{epoch}_{N}.tif")
+                style.savefig(fig, f"./{log_dir}/tmp_training/function/MLP1/function_{epoch}_{N}.png")
 
             case 'boids_ode' | 'boids_field_ode':
                 max_radius_plot = 0.04
@@ -504,13 +514,20 @@ def plot_training(config, pred, gt, log_dir, epoch, N, x, index_cells, n_cells, 
                 if r2_values is not None:
                     valid = r2_values[~np.isnan(r2_values)]
                     if len(valid) > 0:
-                        r2_mean, r2_std = valid.mean(), valid.std()
-                        print(f'  psi R²: {r2_mean:.4f} +/- {r2_std:.4f}  (n={len(valid)})')
-                        style.montage_annotate(ax, f'R²={r2_mean:.3f}±{r2_std:.3f}',
-                                               (0.02, 0.02), verticalalignment='bottom')
+                        psi_r2 = float(valid.mean())
+                        ax.text(0.02, 0.98, f'R²={psi_r2:.3f}±{valid.std():.3f}',
+                                transform=ax.transAxes, verticalalignment='top',
+                                fontsize=style.font_size,
+                                color=style.foreground)
 
-                if not do_tracking:
+                if true_curves:
+                    all_true = np.concatenate(list(true_curves.values()))
+                    ymin, ymax = all_true.min(), all_true.max()
+                    margin = (ymax - ymin) * 0.1
+                    ax.set_ylim([ymin - margin, ymax + margin])
+                elif not do_tracking:
                     plt.ylim(config.plotting.ylim)
+                ax.axhline(y=0, color='grey', linewidth=0.5, linestyle='-')
                 ax.xaxis.set_major_locator(plt.MaxNLocator(3))
                 ax.yaxis.set_major_locator(plt.MaxNLocator(5))
                 from matplotlib.ticker import FormatStrFormatter
@@ -520,7 +537,9 @@ def plot_training(config, pred, gt, log_dir, epoch, N, x, index_cells, n_cells, 
                 style.montage_xlabel(ax, r'$r$')
                 style.montage_ylabel(ax, r'$\psi(r)$')
                 plt.tight_layout()
-                style.savefig(fig, f"./{log_dir}/tmp_training/function/MLP1/function_{epoch}_{N}.tif")
+                style.savefig(fig, f"./{log_dir}/tmp_training/function/MLP1/function_{epoch}_{N}.png")
+
+    return psi_r2
 
 
 # --------------------------------------------------------------------------- #
@@ -566,7 +585,7 @@ def plot_training_cell_field(config, has_siren, has_siren_time, model_f, n_frame
                        embedding[index_cells[n], 1], color=cmap.color(n), s=1)
 
     plt.tight_layout()
-    style.savefig(fig, f"./{log_dir}/tmp_training/embedding/{model_name}_embedding_{epoch}_{N}.tif")
+    style.savefig(fig, f"./{log_dir}/tmp_training/embedding/{model_name}_embedding_{epoch}_{N}.png")
 
     # --- Interaction function curves (vectorized) ---
     fig, ax = style.figure(height=12)
@@ -600,7 +619,7 @@ def plot_training_cell_field(config, has_siren, has_siren_time, model_f, n_frame
                       ynorm=ynorm_np, subsample=5, alpha=0.25, linewidth=8)
 
     plt.tight_layout()
-    style.savefig(fig, f"./{log_dir}/tmp_training/function/MLP1/{model_name}_function_{epoch}_{N}.tif")
+    style.savefig(fig, f"./{log_dir}/tmp_training/function/MLP1/{model_name}_function_{epoch}_{N}.png")
 
     # --- Siren field visualization ---
     if has_siren:
@@ -626,7 +645,7 @@ def plot_training_cell_field(config, has_siren, has_siren_time, model_f, n_frame
             axf.set_xticks([])
             axf.set_yticks([])
             plt.tight_layout()
-            style.savefig(fig, f"./{log_dir}/tmp_training/external_input/{model_name}_{epoch}_{N}_{frame}.tif")
+            style.savefig(fig, f"./{log_dir}/tmp_training/external_input/{model_name}_{epoch}_{N}_{frame}.png")
 
 
 # --------------------------------------------------------------------------- #
@@ -793,18 +812,18 @@ def plot_training_summary_panels(fig, log_dir, model, config, n_cells, n_cell_ty
         return ax
 
     # --- Find the last saved iteration snapshot ---
-    embedding_files = glob.glob(f"./{log_dir}/tmp_training/embedding/*.tif")
+    embedding_files = glob.glob(f"./{log_dir}/tmp_training/embedding/*.png")
     if embedding_files:
         last_file = max(embedding_files, key=os.path.getctime)
         filename = os.path.basename(last_file)
-        last_epoch_N = filename.replace('.tif', '')
+        last_epoch_N = filename.replace('.png', '')
     else:
         last_epoch_N = f"{epoch}_0"
 
     # --- Panels 1-3: load saved images ---
-    _load_panel(fig, 1, f"./{log_dir}/tmp_training/embedding/{last_epoch_N}.tif")
-    _load_panel(fig, 2, f"./{log_dir}/tmp_training/function/MLP1/function_{last_epoch_N}.tif")
-    _load_panel(fig, 3, f"./{log_dir}/tmp_training/loss.tif")
+    _load_panel(fig, 1, f"./{log_dir}/tmp_training/embedding/{last_epoch_N}.png")
+    _load_panel(fig, 2, f"./{log_dir}/tmp_training/function/MLP1/function_{last_epoch_N}.png")
+    _load_panel(fig, 3, f"./{log_dir}/tmp_training/loss.png")
 
     # --- Compute func_list for UMAP and sparsity ---
     embedding = get_embedding(model.a, 0)
@@ -873,7 +892,7 @@ def plot_training_summary_panels(fig, log_dir, model, config, n_cells, n_cell_ty
                            f'n_neighbors={n_neighbors}  min_dist={min_dist}',
                            (0.02, 0.98), verticalalignment='top')
     plt.tight_layout()
-    umap_path = f'./{log_dir}/tmp_training/umap/{epoch}.tif'
+    umap_path = f'./{log_dir}/tmp_training/umap/{epoch}.png'
     style.savefig(fig_umap, umap_path)
 
     # --- Panel 4: load UMAP as raster (consistent with panels 1-3) ---
@@ -977,7 +996,7 @@ def plot_loss_components(loss_dict, regul_history, log_dir, epoch=None, Niter=No
 
     os.makedirs(f'./{log_dir}/tmp_training', exist_ok=True)
     plt.tight_layout()
-    style.savefig(fig_loss, f'./{log_dir}/tmp_training/loss.tif')
+    style.savefig(fig_loss, f'./{log_dir}/tmp_training/loss.png')
 
 
 # --------------------------------------------------------------------------- #
@@ -1070,4 +1089,4 @@ def plot_residual_field_3d(pos, residual, frame, dimension, log_dir, cmap, sim):
         ax.set_aspect('equal')
 
     plt.tight_layout()
-    style.savefig(fig, f'{out_dir}/residual_{frame:06d}.tif')
+    style.savefig(fig, f'{out_dir}/residual_{frame:06d}.png')

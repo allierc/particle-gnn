@@ -33,8 +33,21 @@ from cell_gnn.graph_utils import GraphData, collate_graph_batch
 from tqdm import trange
 from prettytable import PrettyTable
 
+# ANSI color codes for R² progress display
+ANSI_RESET = '\033[0m'
+ANSI_GREEN = '\033[92m'
+ANSI_YELLOW = '\033[93m'
+ANSI_ORANGE = '\033[38;5;208m'
+ANSI_RED = '\033[91m'
 
-def data_train(config=None, erase=False, best_model=None, device=None):
+
+def r2_color(val, thresholds=(0.9, 0.7, 0.3)):
+    """ANSI color for an R² value: green > 0.9, yellow > 0.7, orange > 0.3, red otherwise."""
+    t0, t1, t2 = thresholds
+    return ANSI_GREEN if val > t0 else ANSI_YELLOW if val > t1 else ANSI_ORANGE if val > t2 else ANSI_RED
+
+
+def data_train(config=None, erase=False, best_model=None, device=None, log_file=None):
     """Route training to the appropriate training function."""
 
     seed = config.training.seed
@@ -50,12 +63,12 @@ def data_train(config=None, erase=False, best_model=None, device=None):
     has_cell_field = 'field_ode' in config.graph_model.cell_model_name
 
     if has_cell_field:
-        data_train_cell_field(config, erase, best_model, device)
+        data_train_cell_field(config, erase, best_model, device, log_file=log_file)
     else:
-        data_train_cell(config, erase, best_model, device)
+        data_train_cell(config, erase, best_model, device, log_file=log_file)
 
 
-def data_train_cell(config, erase, best_model, device):
+def data_train_cell(config, erase, best_model, device, log_file=None):
     sim = config.simulation
     tc = config.training
     mc = config.graph_model
@@ -143,10 +156,13 @@ def data_train_cell(config, erase, best_model, device):
     else:
         start_epoch = 0
         net = f"{log_dir}/models/best_model_with_{n_runs - 1}_graphs.pt"
+    # === LLM-MODIFIABLE: OPTIMIZER SETUP START ===
+    # Change optimizer type, learning rate schedule, parameter groups
     lr = tc.learning_rate_start
     lr_embedding = tc.learning_rate_embedding_start
     optimizer, n_total_params = set_trainable_parameters(model, lr_embedding, lr)
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
+    # === LLM-MODIFIABLE: OPTIMIZER SETUP END ===
 
     logger.info(f"total Trainable Params: {n_total_params}")
     logger.info(f'learning rates: {lr}, {lr_embedding}')
@@ -190,7 +206,19 @@ def data_train_cell(config, erase, best_model, device):
     loss_dict = {'loss': []}
     regularizer = LossRegularizer(tc, mc, sim, n_cells, plot_frequency=1)
 
+    metrics_log_path = os.path.join(log_dir, 'tmp_training', 'metrics.log')
+    os.makedirs(os.path.dirname(metrics_log_path), exist_ok=True)
+    with open(metrics_log_path, 'w') as f:
+        f.write('epoch,iteration,psi_r2,loss\n')
+
+    last_psi_r2 = None
+    train_start = time.time()
     time.sleep(1)
+
+    # === LLM-MODIFIABLE: TRAINING LOOP START ===
+    # Main training loop. Suggested changes: loss function, gradient clipping,
+    # data sampling strategy, LR scheduler steps, batch size schedule, early stopping.
+    # Do NOT change: function signature, model construction, data loading, return values.
     for epoch in range(start_epoch, n_epochs):
 
         logger.info(f"Total allocated memory: {torch.cuda.memory_allocated(device) / 1024 ** 3:.2f} GB")
@@ -357,9 +385,13 @@ def data_train_cell(config, erase, best_model, device):
             total_loss += loss.item()
             total_loss_regul += regularizer.get_iteration_total()
 
-            if (N + 1) % 1000 == 0:
+            if N % plot_frequency == 0:
                 avg_loss = total_loss / (N + 1) / n_cells
-                pbar.set_postfix(loss=f'{avg_loss:.6f}')
+                postfix = f'loss={avg_loss:.6f}'
+                if last_psi_r2 is not None:
+                    c = r2_color(last_psi_r2)
+                    postfix += f' {c}R²={last_psi_r2:.3f}{ANSI_RESET}'
+                pbar.set_postfix_str(postfix)
                 logger.info(f'Epoch {epoch}  iter {N + 1}  avg loss: {avg_loss:.6f}')
 
             if (N % plot_frequency == 0) or (N == 0):
@@ -369,11 +401,15 @@ def data_train_cell(config, erase, best_model, device):
 
             if ((epoch < 30) & (N % plot_frequency == 0)) | (N == 0):
                 plot_loss_components(loss_dict, regularizer.get_history(), log_dir, epoch=epoch, Niter=Niter)
-                plot_training(config=config, pred=pred, gt=y_batch, log_dir=log_dir,
+                psi_r2 = plot_training(config=config, pred=pred, gt=y_batch, log_dir=log_dir,
                               epoch=epoch, N=N, x=x_plot, model=model, n_nodes=0, n_node_types=0, index_nodes=0,
                               dataset_num=1,
                               index_cells=index_cells, n_cells=n_cells,
                               n_cell_types=n_cell_types, ynorm=ynorm, cmap=cmap, axis=True, device=device)
+                if psi_r2 is not None:
+                    last_psi_r2 = psi_r2
+                    with open(metrics_log_path, 'a') as f:
+                        f.write(f'{epoch},{N},{psi_r2:.6f},{loss.item() / n_cells:.6f}\n')
                 torch.save({'model_state_dict': model.state_dict(), 'optimizer_state_dict': optimizer.state_dict()},
                            os.path.join(log_dir, 'models', f'best_model_with_{n_runs - 1}_graphs_{epoch}_{N}.pt'))
                 if has_field:
@@ -389,8 +425,14 @@ def data_train_cell(config, erase, best_model, device):
                     'optimizer_state_dict': optimizer.state_dict()},
                    os.path.join(log_dir, 'models', f'best_model_with_{n_runs - 1}_graphs_{epoch}.pt'))
 
-        print("Epoch {}. Loss: {:.6f}  Regul: {:.6f}".format(epoch, total_loss / n_cells, total_loss_regul / n_cells))
+        r2_str = ''
+        if last_psi_r2 is not None:
+            c = r2_color(last_psi_r2)
+            r2_str = f'  {c}psi_R2: {last_psi_r2:.4f}{ANSI_RESET}'
+        print("Epoch {}. Loss: {:.6f}  Regul: {:.6f}{}".format(epoch, total_loss / n_cells, total_loss_regul / n_cells, r2_str))
         logger.info("Epoch {}. Loss: {:.6f}  Regul: {:.6f}".format(epoch, total_loss / n_cells, total_loss_regul / n_cells))
+        if last_psi_r2 is not None:
+            logger.info(f"psi_R2: {last_psi_r2:.6f}")
         list_loss.append(total_loss / n_cells)
         torch.save(list_loss, os.path.join(log_dir, 'loss.pt'))
 
@@ -431,7 +473,7 @@ def data_train_cell(config, erase, best_model, device):
                 ax_tmp.set_xticks([])
                 ax_tmp.set_yticks([])
                 fig_tmp.tight_layout()
-                fig_style.savefig(fig_tmp, f"./{log_dir}/tmp_training/Fig_{epoch}_before training function.tif")
+                fig_style.savefig(fig_tmp, f"./{log_dir}/tmp_training/Fig_{epoch}_before training function.png")
 
                 lr_embedding = 1E-12
                 optimizer, n_total_params = set_trainable_parameters(model, lr_embedding, lr)
@@ -469,23 +511,37 @@ def data_train_cell(config, erase, best_model, device):
                 logger.info(f'Learning rates: {lr}, {lr_embedding}')
 
         fig.tight_layout()
-        fig_style.savefig(fig, f"./{log_dir}/tmp_training/Fig_{epoch}.tif")
+        fig_style.savefig(fig, f"./{log_dir}/tmp_training/Fig_{epoch}.png")
+
+    # === LLM-MODIFIABLE: TRAINING LOOP END ===
+
+    training_time = (time.time() - train_start) / 60.0
+    print(f"training time: {training_time:.1f} min")
+    logger.info(f"training_time_min: {training_time:.1f}")
+
+    if log_file:
+        log_file.write(f"training_final_loss={total_loss / n_cells:.6f}\n")
+        log_file.write(f"training_accuracy={accuracy:.4f}\n")
+        if last_psi_r2 is not None:
+            log_file.write(f"training_psi_R2={last_psi_r2:.6f}\n")
+        log_file.write(f"training_time_min={training_time:.1f}\n")
 
 
 def data_test(config=None, config_file=None, visualize=False, style='color frame', verbose=True, best_model=20,
-              step=15, ratio=1, run=0, test_mode='', sample_embedding=False, cell_of_interest=1, device=[]):
+              step=15, ratio=1, run=0, test_mode='', sample_embedding=False, cell_of_interest=1, device=[],
+              log_file=None):
     """Route testing to the cell testing function.
 
     This simplified version only supports cell-based testing.
     """
 
     data_test_cell(config, config_file, visualize, style, True, best_model, step, ratio, run, test_mode,
-                       sample_embedding, cell_of_interest, device)
+                       sample_embedding, cell_of_interest, device, log_file=log_file)
 
 
 def data_test_cell(config=None, config_file=None, visualize=False, style='color frame', verbose=True,
                        best_model=20, step=15, ratio=1, run=0, test_mode='', sample_embedding=False,
-                       cell_of_interest=1, device=[]):
+                       cell_of_interest=1, device=[], log_file=None):
 
     dataset_name = config.dataset
     sim = config.simulation
@@ -815,22 +871,21 @@ def data_test_cell(config=None, config_file=None, visualize=False, style='color 
             fig = plt.figure(figsize=(fig_w, fig_h), facecolor=active_style.background)
             ax_idx = 1
 
-            # edge data for drawing
-            ei_np = to_numpy(edge_index)
+            # edge data for drawing (only if "edge" in style)
             pos_all_np = to_numpy(x.pos)
             if show_true:
                 pos_true_np = to_numpy(x0.pos)
-            # keep only forward edges (src < dst) to avoid double-drawing
-            fwd = ei_np[0] < ei_np[1]
-            ei_fwd = ei_np[:, fwd]
-            # subsample if too many edges
-            max_plot_edges = 5000
-            if ei_fwd.shape[1] > max_plot_edges:
-                idx_sub = np.random.choice(ei_fwd.shape[1], max_plot_edges, replace=False)
-                ei_fwd = ei_fwd[:, idx_sub]
+            draw_edges = 'edge' in style
+            ei_fwd = None
+            if draw_edges:
+                ei_np = to_numpy(edge_index)
+                fwd = ei_np[0] < ei_np[1]
+                ei_fwd = ei_np[:, fwd]
 
             # === helper: draw edges on a 2D axis ===
             def _draw_edges_2d(ax, pos_np, ei):
+                if ei is None:
+                    return
                 from matplotlib.collections import LineCollection
                 src_pos = pos_np[ei[0]]
                 dst_pos = pos_np[ei[1]]
@@ -840,6 +895,8 @@ def data_test_cell(config=None, config_file=None, visualize=False, style='color 
 
             # === helper: draw edges on a 3D axis ===
             def _draw_edges_3d(ax, pos_np, ei):
+                if ei is None:
+                    return
                 from mpl_toolkits.mplot3d.art3d import Line3DCollection
                 src_pos = pos_np[ei[0]]
                 dst_pos = pos_np[ei[1]]
@@ -903,12 +960,13 @@ def data_test_cell(config=None, config_file=None, visualize=False, style='color 
                 z_vals = pos_all_np[:, 2]
                 mask = np.abs(z_vals - z_center) < z_thickness
                 # draw edges within the slice
-                slice_indices = np.where(mask)[0]
-                slice_set = set(slice_indices.tolist())
-                slice_edge_mask = np.array([ei_fwd[0, k] in slice_set and ei_fwd[1, k] in slice_set
-                                            for k in range(ei_fwd.shape[1])])
-                if slice_edge_mask.any():
-                    _draw_edges_2d(ax, pos_all_np, ei_fwd[:, slice_edge_mask])
+                if ei_fwd is not None:
+                    slice_indices = np.where(mask)[0]
+                    slice_set = set(slice_indices.tolist())
+                    slice_edge_mask = np.array([ei_fwd[0, k] in slice_set and ei_fwd[1, k] in slice_set
+                                                for k in range(ei_fwd.shape[1])])
+                    if slice_edge_mask.any():
+                        _draw_edges_2d(ax, pos_all_np, ei_fwd[:, slice_edge_mask])
                 pos_slice = pos_all_np[mask]
                 if show_true:
                     ax.scatter(pos_slice[:, 0], pos_slice[:, 1], s=s_p, color='b', alpha=0.5, edgecolors='none', label='rollout')
@@ -971,7 +1029,7 @@ def data_test_cell(config=None, config_file=None, visualize=False, style='color 
                     ax_f.set_xlim([0, 1])
                     ax_f.set_ylim([0, 1])
                 plt.tight_layout()
-                fig_style.savefig(fig_f, f"./{log_dir}/tmp_recons/Features_{config_file}_{run}_{num}.tif")
+                fig_style.savefig(fig_f, f"./{log_dir}/tmp_recons/Features_{config_file}_{run}_{num}.png")
 
             if 'boundary' in style:
                 fig_b, ax_b = fig_init(formatx='%.1f', formaty='%.1f')
@@ -980,7 +1038,7 @@ def data_test_cell(config=None, config_file=None, visualize=False, style='color 
                 ax_b.set_xlim([0, 1])
                 ax_b.set_ylim([0, 1])
                 plt.tight_layout()
-                fig_style.savefig(fig_b, f"./{log_dir}/tmp_recons/Boundary_{config_file}_{num}.tif")
+                fig_style.savefig(fig_b, f"./{log_dir}/tmp_recons/Boundary_{config_file}_{num}.png")
 
     # --- One-step residual field ---
     print('computing one-step residual field ...')
@@ -1040,8 +1098,12 @@ def data_test_cell(config=None, config_file=None, visualize=False, style='color 
             f.write(f'{key}: {value}\n')
     print(f'results written to {results_log_path}')
 
+    if log_file:
+        for key, value in results.items():
+            log_file.write(f"{key}={value}\n")
 
-def data_train_cell_field(config, erase, best_model, device):
+
+def data_train_cell_field(config, erase, best_model, device, log_file=None):
     sim = config.simulation
     tc = config.training
     mc = config.graph_model
@@ -1381,7 +1443,7 @@ def data_train_cell_field(config, erase, best_model, device):
                 ax_tmp.set_xticks([])
                 ax_tmp.set_yticks([])
                 fig_tmp.tight_layout()
-                fig_style.savefig(fig_tmp, f"./{log_dir}/tmp_training/Fig_{epoch}_before training function.tif")
+                fig_style.savefig(fig_tmp, f"./{log_dir}/tmp_training/Fig_{epoch}_before training function.png")
 
                 lr_embedding = 1E-12
                 optimizer, n_total_params = set_trainable_parameters(model, lr_embedding, lr)
@@ -1419,4 +1481,4 @@ def data_train_cell_field(config, erase, best_model, device):
                 logger.info(f'Learning rates: {lr}, {lr_embedding}')
 
         fig.tight_layout()
-        fig_style.savefig(fig, f"./{log_dir}/tmp_training/Fig_{epoch}.tif")
+        fig_style.savefig(fig, f"./{log_dir}/tmp_training/Fig_{epoch}.png")

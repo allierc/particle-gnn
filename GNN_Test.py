@@ -92,6 +92,11 @@ def parse_training_log(path):
     if accuracies:
         metrics['training_accuracy'] = float(accuracies[-1])
 
+    # Last psi R²: "psi_R2: X.XXXXXX"
+    r2_values = re.findall(r'psi_R2: ([\d.]+)', content)
+    if r2_values:
+        metrics['training_psi_R2'] = float(r2_values[-1])
+
     return metrics
 
 
@@ -446,6 +451,7 @@ def save_reference(ref_path, config_tables_data):
         'rollout_geomloss_mean': 0.005,
         'rollout_geomloss_final': 0.01,
         'training_accuracy': 0.05,
+        'training_psi_R2': 0.05,
     }
 
     for config_name, metrics in config_tables_data.items():

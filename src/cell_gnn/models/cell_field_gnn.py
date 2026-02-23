@@ -11,23 +11,52 @@ from cell_gnn.models.registry import register_model
 
 @register_model("arbitrary_field_ode", "boids_field_ode")
 class CellFieldGNN(nn.Module):
-    """Interaction Network as proposed in this paper:
-    https://proceedings.neurips.cc/paper/2016/hash/3147da8ab4a0437c15ef51a5cc7f2dc4-Abstract.html"""
+    """GNN for cell dynamics with a continuous field (SIREN).
 
+    Combines pairwise interactions (lin_edge) with a learned spatiotemporal field (model_f).
+    output = lin_edge(delta_pos, delta_vel, a_i, a_j) * field_j
     """
-    Model learning the acceleration of cells as a function of their relative distance and relative velocities.
-    The interaction function is defined by a MLP self.lin_edge
-    The cell embedding is defined by a table self.a
 
-    Inputs
-    ----------
-    data : a torch_geometric.data object
-
-    Returns
-    -------
-    pred : float
-        the acceleration of the cells (dimension 2)
-    """
+    PARAMS_DOC = {
+        "model_name": "CellFieldGNN",
+        "description": "GNN for cell dynamics with a continuous field (SIREN). "
+                       "Combines pairwise interactions (lin_edge) with a learned spatiotemporal field (model_f). "
+                       "output = lin_edge(delta_pos, delta_vel, a_i) * field_j",
+        "equations": {
+            "message_arbitrary_field": "msg_j = lin_edge(delta_pos / max_r, r / max_r, a_i) * field_j",
+            "message_boids_field": "msg_j = lin_edge(delta_pos / max_r, r / max_r, dpos_i, dpos_j, a_i) * field_j",
+            "field": "field(t) = model_f(t / T)^2  (SIREN network, squared output)",
+            "update_linear": "acceleration = lin_update(aggr(messages), dpos, a_i)",
+        },
+        "graph_model_config": {
+            "lin_edge (MLP0)": {
+                "description": "Pairwise interaction function, multiplied by field value at source",
+                "input_size": {
+                    "arbitrary_field_ode": "dimension + 1 + embedding_dim  (delta_pos, r, a_i)",
+                    "boids_field_ode": "dimension + 1 + 2*dimension + embedding_dim  (delta_pos, r, dpos_i, dpos_j, a_i)",
+                },
+                "output_size": "dimension",
+                "hidden_dim": {"typical_range": [64, 256], "default": 128},
+                "n_layers": {"typical_range": [3, 7], "default": 5},
+            },
+            "model_f (SIREN)": {
+                "description": "Continuous field via SIREN network — output squared and multiplied with edge messages",
+                "input_size_nnr": "1 (time) or 3 (t, x, y)",
+                "hidden_dim_nnr": {"default": 128},
+                "n_layers_nnr": {"default": 5},
+                "omega": {"description": "SIREN frequency parameter", "default": 80.0},
+            },
+            "embedding a": {
+                "shape": "(n_datasets, n_cells + n_ghosts, embedding_dim)",
+                "description": "Learned per-cell embedding encoding cell type",
+            },
+        },
+        "training_config": {
+            "learning_rate_start": {"description": "LR for MLP params"},
+            "learning_rate_embedding_start": {"description": "LR for embedding"},
+            "learning_rate_nnr": {"description": "LR for SIREN field network"},
+        },
+    }
 
     def __init__(self, config, device, aggr_type=None, bc_dpos=None, dimension=2):
 

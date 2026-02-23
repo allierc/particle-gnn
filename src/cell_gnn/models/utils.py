@@ -1,3 +1,7 @@
+import glob
+import os
+import shutil
+
 import torch
 import numpy as np
 import torch.nn as nn
@@ -259,3 +263,91 @@ class LossRegularizer:
 
     def get_history(self):
         return self._history
+
+
+def save_exploration_artifacts(root_dir, exploration_dir, config, config_file_, pre_folder, iteration,
+                               iter_in_block=1, block_number=1):
+    """Save exploration artifacts for Claude analysis.
+
+    Adapted from flyvis-gnn save_exploration_artifacts(). Saves montage, MLP, embedding,
+    and config snapshots to the exploration directory.
+
+    Args:
+        root_dir: Root directory of the project
+        exploration_dir: Base directory for exploration artifacts
+        config: Configuration object
+        config_file_: Config file name (without extension)
+        pre_folder: Prefix folder for config
+        iteration: Current iteration number
+        iter_in_block: Iteration number within current block (1-indexed)
+        block_number: Current block number (1-indexed)
+
+    Returns:
+        dict with paths to saved directories
+    """
+    config_save_dir = f"{exploration_dir}/config"
+    montage_save_dir = f"{exploration_dir}/montage"
+    mlp_save_dir = f"{exploration_dir}/mlp"
+    embedding_save_dir = f"{exploration_dir}/embedding"
+    tree_save_dir = f"{exploration_dir}/exploration_tree"
+    protocol_save_dir = f"{exploration_dir}/protocol"
+    memory_save_dir = f"{exploration_dir}/memory"
+
+    # create directories at start of experiment (clear only on iteration 1)
+    if iteration == 1:
+        if os.path.exists(exploration_dir):
+            shutil.rmtree(exploration_dir)
+    # always ensure directories exist (for resume support)
+    for d in [config_save_dir, montage_save_dir, mlp_save_dir, embedding_save_dir,
+              tree_save_dir, protocol_save_dir, memory_save_dir]:
+        os.makedirs(d, exist_ok=True)
+
+    is_block_start = (iter_in_block == 1)
+
+    # save config file at first iteration of each block
+    if is_block_start:
+        src_config = f"{root_dir}/config/{pre_folder}{config_file_}.yaml"
+        dst_config = f"{config_save_dir}/block_{block_number:03d}.yaml"
+        if os.path.exists(src_config):
+            shutil.copy2(src_config, dst_config)
+
+    tmp_training_dir = f"{root_dir}/log/{pre_folder}{config_file_}/tmp_training"
+
+    # save montage (most recent Fig_montage_*.tif or Fig_montage_*.png)
+    montage_files = glob.glob(f"{tmp_training_dir}/Fig_montage_*.*")
+    if montage_files:
+        latest = max(montage_files, key=os.path.getmtime)
+        ext = os.path.splitext(latest)[1]
+        shutil.copy2(latest, f"{montage_save_dir}/iter_{iteration:03d}{ext}")
+
+    # save MLP interaction function plot (from tmp_training)
+    mlp_files = glob.glob(f"{tmp_training_dir}/Fig_*_MLP*.png") + glob.glob(f"{tmp_training_dir}/Fig_*_function*.png")
+    if mlp_files:
+        latest = max(mlp_files, key=os.path.getmtime)
+        shutil.copy2(latest, f"{mlp_save_dir}/iter_{iteration:03d}.png")
+
+    # save embedding UMAP plot
+    embed_files = glob.glob(f"{tmp_training_dir}/Fig_*_embedding*.png") + glob.glob(f"{tmp_training_dir}/Fig_*_UMAP*.png")
+    if not embed_files:
+        # also check results dir
+        results_dir = f"{root_dir}/log/{pre_folder}{config_file_}/results"
+        embed_files = glob.glob(f"{results_dir}/embedding*.png") + glob.glob(f"{results_dir}/UMAP*.png")
+    if embed_files:
+        latest = max(embed_files, key=os.path.getmtime)
+        shutil.copy2(latest, f"{embedding_save_dir}/iter_{iteration:03d}.png")
+
+    # activity path (for passing to Claude prompt)
+    activity_path = f"{montage_save_dir}/iter_{iteration:03d}.tif"
+    if not os.path.exists(activity_path):
+        activity_path = f"{montage_save_dir}/iter_{iteration:03d}.png"
+
+    return {
+        'config_save_dir': config_save_dir,
+        'montage_save_dir': montage_save_dir,
+        'mlp_save_dir': mlp_save_dir,
+        'embedding_save_dir': embedding_save_dir,
+        'tree_save_dir': tree_save_dir,
+        'protocol_save_dir': protocol_save_dir,
+        'memory_save_dir': memory_save_dir,
+        'activity_path': activity_path,
+    }

@@ -336,6 +336,16 @@ class INRConfig(BaseModel):
     ngp_n_hidden_layers: int = 4
 
 
+class ClaudeConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore", protected_namespaces=())
+
+    n_epochs: int = 1
+    data_augmentation_loop: int = 100
+    n_iter_block: int = 24
+    ucb_c: float = 1.414
+    node_name: str = "a100"
+
+
 # Main config schema for cell-gnn
 
 
@@ -353,6 +363,7 @@ class CellGNNConfig(BaseModel):
     plotting: PlottingConfig
     training: TrainingConfig
     inr: Optional[INRConfig] = None
+    claude: Optional[ClaudeConfig] = None
 
     @staticmethod
     def from_yaml(file_name: str):

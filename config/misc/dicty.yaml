@@ -50,10 +50,17 @@ training:
   n_runs: 1
   device: "auto"
   n_epochs: 1
-  batch_size: 1
+  batch_size: 8
   small_init_batch_size: False
   sparsity: "none"
   rotation_augmentation: True
-  data_augmentation_loop: 10
+  data_augmentation_loop: 20
   learning_rate_start: 1.0E-4
   learning_rate_embedding_start: 1.0E-5
+
+claude:
+  n_epochs: 1
+  data_augmentation_loop: 100
+  n_iter_block: 24
+  ucb_c: 1.414
+  node_name: "a100"
