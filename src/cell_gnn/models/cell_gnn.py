@@ -80,14 +80,12 @@ class CellGNN(nn.Module):
 
         self.device = device
 
-        self.input_size = model_config.input_size
         self.output_size = model_config.output_size
         self.hidden_dim = model_config.hidden_dim
         self.n_layers = model_config.n_layers
 
         self.update_type = model_config.update_type
         self.n_layers_update = model_config.n_layers_update
-        self.input_size_update = model_config.input_size_update
         self.hidden_dim_update = model_config.hidden_dim_update
         self.output_size_update = model_config.output_size_update
 
@@ -97,6 +95,21 @@ class CellGNN(nn.Module):
         self.delta_t = simulation_config.delta_t
         self.n_cells = simulation_config.n_cells
         self.embedding_dim = model_config.embedding_dim
+
+        # Auto-compute input_size from model type to stay consistent with embedding_dim
+        match self.model:
+            case 'arbitrary_ode':
+                self.input_size = self.dimension + 1 + self.embedding_dim
+            case 'boids_ode' | 'gravity_ode':
+                self.input_size = 3 * self.dimension + 1 + self.embedding_dim
+            case _:
+                self.input_size = model_config.input_size
+
+        # Auto-compute input_size_update for MLP1
+        if self.update_type != 'none':
+            self.input_size_update = self.dimension + self.embedding_dim + self.output_size
+        else:
+            self.input_size_update = model_config.input_size_update
         self.embedding_trial = config.training.embedding_trial
 
         self.n_frames = simulation_config.n_frames

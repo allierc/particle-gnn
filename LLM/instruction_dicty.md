@@ -59,6 +59,8 @@ See `CellGNN.PARAMS_DOC` in `src/cell_gnn/models/cell_gnn.py` for detailed model
 | `max_radius` | simulation.max_radius | 0.2 | Interaction radius | [0.1, 0.5] |
 | `rotation_augmentation` | training.rotation_augmentation | True | SO(3) rotation augmentation | - |
 
+**Note on `input_size`**: The `input_size` field in `graph_model` is **auto-computed** from the model type, dimension, and `embedding_dim`. You do NOT need to update it manually. The formula for `arbitrary_ode` is: `input_size = dimension + 1 + embedding_dim`. Changing `embedding_dim` automatically adjusts the MLP input layer.
+
 ## Recurrent Training (Key for Rollout RMSE)
 
 When `recursive_training: True` and `recursive_loop > 0`, the model unrolls multiple steps during training, directly optimizing multi-step prediction stability. This is the **key lever** for reducing rollout RMSE.

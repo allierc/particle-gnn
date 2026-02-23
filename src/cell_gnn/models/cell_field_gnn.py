@@ -69,7 +69,6 @@ class CellFieldGNN(nn.Module):
         train_config = config.training
 
         self.device = device
-        self.input_size = model_config.input_size
         self.output_size = model_config.output_size
         self.hidden_dim = model_config.hidden_dim
         self.n_layers = model_config.n_layers
@@ -91,6 +90,15 @@ class CellFieldGNN(nn.Module):
         self.n_ghosts = int(train_config.n_ghosts)
         self.dimension = dimension
         self.embedding_trial = config.training.embedding_trial
+
+        # Auto-compute input_size from model type to stay consistent with embedding_dim
+        match self.model:
+            case 'arbitrary_field_ode':
+                self.input_size = self.dimension + 1 + self.embedding_dim
+            case 'boids_field_ode':
+                self.input_size = self.dimension + 1 + 4 + self.embedding_dim
+            case _:
+                self.input_size = model_config.input_size
 
         self.lin_edge = MLP(input_size=self.input_size, output_size=self.output_size, nlayers=self.n_layers,
                                 hidden_size=self.hidden_dim, device=self.device)
