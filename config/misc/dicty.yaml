@@ -35,8 +35,8 @@ plotting:
   invert_mlp1_sign: True
 
 inr:
-  inr_field_name: "residual"
-  inr_type: "siren_txy"
+  inr_field_name: "velocity"
+  inr_type: "siren_txyz"
   inr_gradient_mode: false
   hidden_dim_inr: 256
   n_layers_inr: 5

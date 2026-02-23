@@ -13,6 +13,19 @@ import torch.nn.functional as F
 from scipy.stats import linregress
 from tqdm import trange
 
+# ANSI color codes for R² progress display
+ANSI_RESET = '\033[0m'
+ANSI_GREEN = '\033[92m'
+ANSI_YELLOW = '\033[93m'
+ANSI_ORANGE = '\033[38;5;208m'
+ANSI_RED = '\033[91m'
+
+
+def _r2_color(val, thresholds=(0.9, 0.7, 0.3)):
+    """ANSI color for an R² value: green > 0.9, yellow > 0.7, orange > 0.3, red otherwise."""
+    t0, t1, t2 = thresholds
+    return ANSI_GREEN if val > t0 else ANSI_YELLOW if val > t1 else ANSI_ORANGE if val > t2 else ANSI_RED
+
 from cell_gnn.config import CellGNNConfig, INRConfig, INRType
 from cell_gnn.zarr_io import load_simulation_data, load_raw_array
 
@@ -33,7 +46,7 @@ def _build_model(inr_cfg, input_dim, output_dim, device):
     """Construct the INR model based on config."""
     inr_type = inr_cfg.inr_type
 
-    if inr_type in (INRType.SIREN_TXY, INRType.SIREN_T):
+    if inr_type in (INRType.SIREN_TXY, INRType.SIREN_TXYZ, INRType.SIREN_T):
         from cell_gnn.models.Siren_Network import Siren
         model = Siren(
             in_features=input_dim,
@@ -158,7 +171,7 @@ def data_train_INR(config, device, field_name=None, run=0, erase=False):
     ground_truth = torch.tensor(field_data, dtype=torch.float32, device=device)
 
     # --- model construction ---
-    if inr_type == INRType.SIREN_TXY:
+    if inr_type in (INRType.SIREN_TXY, INRType.SIREN_TXYZ):
         input_dim = 1 + dimension
         output_dim = 1 if gradient_mode else n_components
     elif inr_type == INRType.SIREN_T:
@@ -199,8 +212,11 @@ def data_train_INR(config, device, field_name=None, run=0, erase=False):
     t_start = time.time()
 
     print(f'  training for {total_steps} steps, batch_size={batch_size} ...')
+    print(f'  report every {report_interval} iterations, plot every {viz_interval} iterations')
 
-    for step in trange(total_steps + 1, ncols=100, desc=f'INR {field_name}'):
+    last_r2 = 0.0
+    pbar = trange(total_steps + 1, ncols=100, desc=f'INR {field_name}')
+    for step in pbar:
         optimizer.zero_grad()
 
         # sample random frames
@@ -214,7 +230,7 @@ def data_train_INR(config, device, field_name=None, run=0, erase=False):
             pred = pred_flat.reshape(batch_size, n_cells, n_components)
             loss = F.mse_loss(pred, gt_batch)
 
-        elif inr_type in (INRType.SIREN_TXY, INRType.NGP):
+        elif inr_type in (INRType.SIREN_TXY, INRType.SIREN_TXYZ, INRType.NGP):
             # input: (B*N, 1+dim), output: (B*N, C)
             pos_batch = torch.tensor(
                 pos_data[sample_ids] / xy_period,
@@ -261,7 +277,14 @@ def data_train_INR(config, device, field_name=None, run=0, erase=False):
                 pred_all_np = pred_all.cpu().numpy().reshape(-1)
                 _, _, r_value, _, _ = linregress(gt_all, pred_all_np)
                 r2 = r_value ** 2
-            print(f'  {pct:5.1f}% | step {step:6d}/{total_steps} | loss: {loss.item():.6f} | R2: {r2:.4f} | {its:.1f} it/s')
+                last_r2 = r2
+            c = _r2_color(r2)
+            print(f'  {pct:5.1f}% | step {step:6d}/{total_steps} | loss: {loss.item():.6f} | {c}R2: {r2:.4f}{ANSI_RESET} | {its:.1f} it/s')
+
+        # update pbar with color-coded R2
+        if step % 1000 == 0:
+            c = _r2_color(last_r2)
+            pbar.set_postfix_str(f'loss={loss.item():.6f} {c}R²={last_r2:.4f}{ANSI_RESET}')
 
         # --- visualization ---
         if step > 0 and step % viz_interval == 0:

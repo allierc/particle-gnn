@@ -79,6 +79,7 @@ class ClusterConnectivity(StrEnum):
 
 class INRType(StrEnum):
     SIREN_TXY = "siren_txy"
+    SIREN_TXYZ = "siren_txyz"  # alias for 3D — same behavior as siren_txy
     SIREN_T = "siren_t"
     NGP = "ngp"
 

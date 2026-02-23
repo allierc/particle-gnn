@@ -64,7 +64,7 @@ def plot_inr_training_summary(loss_list, gt_np, pred_np, pos_np,
         output_folder: directory for output images
         gradient_mode: whether gradient mode was used
     """
-    style = dark_style
+    style = default_style
     style.apply_globally()
 
     fig, axes = plt.subplots(2, 3, figsize=(18, 12), facecolor=style.background)
@@ -87,7 +87,7 @@ def plot_inr_training_summary(loss_list, gt_np, pred_np, pos_np,
     # top-middle: per-frame MSE
     ax = axes[0, 1]
     per_frame_mse = np.mean((gt_np - pred_np) ** 2, axis=(1, 2))
-    ax.plot(per_frame_mse, color='cyan', linewidth=0.8)
+    ax.plot(per_frame_mse, color='black', linewidth=0.8)
     ax.set_title('per-frame mse', fontsize=10, color=style.foreground)
     ax.set_xlabel('frame', fontsize=8, color=style.foreground)
 
@@ -124,9 +124,9 @@ def plot_inr_training_summary(loss_list, gt_np, pred_np, pos_np,
         q_step = max(1, n_cells // 500)
         ax.quiver(pos_mid[::q_step, 0], pos_mid[::q_step, 1],
                   gt_mid[::q_step, 0], gt_mid[::q_step, 1],
-                  mag_gt[::q_step], cmap='coolwarm', alpha=0.7)
+                  mag_gt[::q_step], cmap='coolwarm', alpha=1.0)
     else:
-        ax.scatter(pos_mid[:, 0], pos_mid[:, 1], c=gt_mid[:, 0], cmap='coolwarm', s=5, alpha=0.7)
+        ax.scatter(pos_mid[:, 0], pos_mid[:, 1], c=gt_mid[:, 0], cmap='coolwarm', s=5, alpha=1.0)
     ax.set_xlim([0, 1]); ax.set_ylim([0, 1])
     ax.set_title(f'gt (frame {mid})', fontsize=10, color=style.foreground)
     ax.set_aspect('equal')
@@ -138,9 +138,9 @@ def plot_inr_training_summary(loss_list, gt_np, pred_np, pos_np,
     if n_components >= 2:
         ax.quiver(pos_mid[::q_step, 0], pos_mid[::q_step, 1],
                   pred_mid[::q_step, 0], pred_mid[::q_step, 1],
-                  mag_pred[::q_step], cmap='coolwarm', alpha=0.7)
+                  mag_pred[::q_step], cmap='coolwarm', alpha=1.0)
     else:
-        ax.scatter(pos_mid[:, 0], pos_mid[:, 1], c=pred_mid[:, 0], cmap='coolwarm', s=5, alpha=0.7)
+        ax.scatter(pos_mid[:, 0], pos_mid[:, 1], c=pred_mid[:, 0], cmap='coolwarm', s=5, alpha=1.0)
     ax.set_xlim([0, 1]); ax.set_ylim([0, 1])
     ax.set_title(f'predicted (frame {mid})', fontsize=10, color=style.foreground)
     ax.set_aspect('equal')
@@ -148,7 +148,7 @@ def plot_inr_training_summary(loss_list, gt_np, pred_np, pos_np,
     # bottom-right: pred vs gt scatter
     ax = axes[1, 2]
     subsample = max(1, len(gt_flat) // 10000)
-    ax.scatter(gt_flat[::subsample], pred_flat[::subsample], s=1, alpha=0.3, color='cyan')
+    ax.scatter(gt_flat[::subsample], pred_flat[::subsample], s=1, alpha=0.3, color='black')
     lims = [min(gt_flat.min(), pred_flat.min()), max(gt_flat.max(), pred_flat.max())]
     ax.plot(lims, lims, 'r--', linewidth=0.5)
     ax.set_title(f'pred vs gt  R2={r2:.4f}', fontsize=10, color=style.foreground)
@@ -175,7 +175,7 @@ def plot_inr_kinograph(gt_np, pred_np, field_name, n_components, n_cells,
         n_cells: number of cells
         output_folder: directory for output
     """
-    style = dark_style
+    style = default_style
     style.apply_globally()
 
     fig, axes = plt.subplots(2, 2, figsize=(16, 12), facecolor=style.background)
@@ -218,7 +218,7 @@ def plot_inr_kinograph(gt_np, pred_np, field_name, n_components, n_cells,
     gt_flat = gt_np.reshape(-1)
     pred_flat = pred_np.reshape(-1)
     subsample = max(1, len(gt_flat) // 20000)
-    ax.scatter(gt_flat[::subsample], pred_flat[::subsample], s=1, alpha=0.2, color='cyan')
+    ax.scatter(gt_flat[::subsample], pred_flat[::subsample], s=1, alpha=0.2, color='black')
     lims = [min(gt_flat.min(), pred_flat.min()), max(gt_flat.max(), pred_flat.max())]
     ax.plot(lims, lims, 'r--', linewidth=0.5)
     ax.set_title('scatter', fontsize=10, color=style.foreground)
@@ -245,7 +245,7 @@ def plot_inr_gradient_field(pos_np, gt_field, pred_field, potential, frame_idx,
         dimension: spatial dimension
         output_folder: directory for output
     """
-    style = dark_style
+    style = default_style
     style.apply_globally()
 
     fig, axes = plt.subplots(1, 3, figsize=(18, 6), facecolor=style.background)
@@ -257,7 +257,7 @@ def plot_inr_gradient_field(pos_np, gt_field, pred_field, potential, frame_idx,
 
     # left: scalar potential
     ax = axes[0]
-    sc = ax.scatter(pos_np[:, 0], pos_np[:, 1], c=potential, cmap='viridis', s=8, alpha=0.7)
+    sc = ax.scatter(pos_np[:, 0], pos_np[:, 1], c=potential, cmap='viridis', s=8, alpha=1.0)
     plt.colorbar(sc, ax=ax, label='phi')
     ax.set_xlim([0, 1]); ax.set_ylim([0, 1])
     ax.set_title(f'potential phi (frame {frame_idx})', fontsize=10, color=style.foreground)
@@ -268,7 +268,7 @@ def plot_inr_gradient_field(pos_np, gt_field, pred_field, potential, frame_idx,
     mag = np.sqrt((pred_field ** 2).sum(axis=-1))
     ax.quiver(pos_np[::q_step, 0], pos_np[::q_step, 1],
               pred_field[::q_step, 0], pred_field[::q_step, 1],
-              mag[::q_step], cmap='coolwarm', alpha=0.7)
+              mag[::q_step], cmap='coolwarm', alpha=1.0)
     ax.set_xlim([0, 1]); ax.set_ylim([0, 1])
     ax.set_title('-grad(phi)', fontsize=10, color=style.foreground)
     ax.set_aspect('equal')
@@ -278,7 +278,7 @@ def plot_inr_gradient_field(pos_np, gt_field, pred_field, potential, frame_idx,
     mag_gt = np.sqrt((gt_field ** 2).sum(axis=-1))
     ax.quiver(pos_np[::q_step, 0], pos_np[::q_step, 1],
               gt_field[::q_step, 0], gt_field[::q_step, 1],
-              mag_gt[::q_step], cmap='coolwarm', alpha=0.7)
+              mag_gt[::q_step], cmap='coolwarm', alpha=1.0)
     ax.set_xlim([0, 1]); ax.set_ylim([0, 1])
     ax.set_title('ground truth', fontsize=10, color=style.foreground)
     ax.set_aspect('equal')
