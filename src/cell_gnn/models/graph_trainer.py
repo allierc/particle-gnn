@@ -84,7 +84,6 @@ def data_train_cell(config, erase, best_model, device, log_file=None):
     min_radius = sim.min_radius
     delta_t = sim.delta_t
     n_epochs = tc.n_epochs
-    time_window = tc.time_window
     time_step = tc.time_step
     data_augmentation_loop = tc.data_augmentation_loop
     recursive_loop = tc.recursive_loop
@@ -209,9 +208,9 @@ def data_train_cell(config, erase, best_model, device, log_file=None):
     metrics_log_path = os.path.join(log_dir, 'tmp_training', 'metrics.log')
     os.makedirs(os.path.dirname(metrics_log_path), exist_ok=True)
     with open(metrics_log_path, 'w') as f:
-        f.write('epoch,iteration,psi_r2,loss\n')
+        f.write('epoch,iteration,lin_edge_r2,loss\n')
 
-    last_psi_r2 = None
+    last_lin_edge_r2 = None
     train_start = time.time()
     time.sleep(1)
 
@@ -253,37 +252,30 @@ def data_train_cell(config, erase, best_model, device, log_file=None):
 
             regularizer.reset_iteration()
             recurrent_active = recursive_loop > 0 and (not tc.recursive_training or epoch >= tc.recursive_training_start_epoch)
-            dataset_batch = []
+            states_batch = []
+            edges_batch = []
             ids_batch = []
             ids_index = 0
             loss = 0
             for batch in range(batch_size):
 
                 run = 0
-                k = time_window + np.random.randint(n_ts_frames - 1 - time_window - time_step - recursive_loop)
+                k = np.random.randint(n_ts_frames - 1 - time_step - recursive_loop)
                 x_state = x_ts.frame(k).to(device).clone().detach()
                 if has_field:
                     x_state.field = model_f(time=k / n_frames) ** 2
-                x = x_state.to_packed()
 
                 edges = edges_radius_blockwise(x_state.pos, bc_dpos, min_radius, max_radius, block=4096)
 
+                n_cells_b = x_state.n_cells
                 if batch_ratio < 1:
-                    ids = np.random.permutation(x.shape[0])[:int(x.shape[0] * batch_ratio)]
+                    ids = np.random.permutation(n_cells_b)[:int(n_cells_b * batch_ratio)]
                     ids = np.sort(ids)
                     mask = torch.isin(edges[1, :], torch.tensor(ids, device=device))
                     edges = edges[:, mask]
 
-                if time_window == 0:
-                    dataset = GraphData(x=x[:, :], edge_index=edges, num_nodes=x.shape[0])
-                    dataset_batch.append(dataset)
-                else:
-                    xt = []
-                    for t in range(time_window):
-                        x_ = x_ts.frame(k - t).to_packed().to(device)
-                        xt.append(x_[:, :])
-                    dataset = GraphData(x=xt, edge_index=edges, num_nodes=x.shape[0])
-                    dataset_batch.append(dataset)
+                states_batch.append(x_state)
+                edges_batch.append(edges)
 
                 if recurrent_active:
                     y = x_ts.frame(k + recursive_loop).pos.to(device).clone().detach()
@@ -296,51 +288,45 @@ def data_train_cell(config, erase, best_model, device, log_file=None):
                     run = 1
                 if batch == 0:
                     data_id = torch.ones((y.shape[0], 1), dtype=torch.int) * run
-                    x_batch = x
                     y_batch = y
-                    k_batch = torch.ones((x.shape[0], 1), dtype=torch.int, device=device) * k
+                    k_batch = torch.ones((n_cells_b, 1), dtype=torch.int, device=device) * k
                     if batch_ratio < 1:
                         ids_batch = ids
                 else:
                     data_id = torch.cat((data_id, torch.ones((y.shape[0], 1), dtype=torch.int) * run), dim=0)
-                    x_batch = torch.cat((x_batch, x), dim=0)
                     y_batch = torch.cat((y_batch, y), dim=0)
-                    k_batch = torch.cat((k_batch, torch.ones((x.shape[0], 1), dtype=torch.int, device=device) * k), dim=0)
+                    k_batch = torch.cat((k_batch, torch.ones((n_cells_b, 1), dtype=torch.int, device=device) * k), dim=0)
                     if batch_ratio < 1:
                         ids_batch = np.concatenate((ids_batch, ids + ids_index), axis=0)
 
-                ids_index += x.shape[0]
+                ids_index += n_cells_b
 
-            batch = collate_graph_batch(dataset_batch)
+            batch_state, batch_edges = CellState.collate(states_batch, edges_batch)
             optimizer.zero_grad()
 
-            batch_state = CellState.from_packed(batch.x, dimension)
-            pred = model(batch_state, batch.edge_index, data_id=data_id, training=True, k=k_batch, has_field=has_field)
+            pred = model(batch_state, batch_edges, data_id=data_id, training=True, k=k_batch, has_field=has_field)
 
             if recurrent_active:
                 for loop in range(recursive_loop):
                     ids_index = 0
                     for b in range(batch_size):
-                        xs = CellState.from_packed(dataset_batch[b].x.clone().detach(), dimension)
+                        xs = states_batch[b].clone().detach()
                         n_b = xs.n_cells
 
-                        X1 = xs.pos
-                        V1 = xs.vel
+                        pred_b = pred[ids_index:ids_index + n_b] * ynorm
                         if mc.prediction == '2nd_derivative':
-                            V1 = V1 + pred[ids_index:ids_index + n_b] * ynorm * delta_t
+                            xs.vel = xs.vel + pred_b * delta_t
                         else:
-                            V1 = pred[ids_index:ids_index + n_b] * ynorm
-                        xs.pos = bc_pos(X1 + V1 * delta_t)
-                        xs.vel = V1
+                            xs.vel = pred_b
+                        xs.pos = bc_pos(xs.pos + xs.vel * delta_t)
                         if tc.noise_level > 0:
                             xs.pos = xs.pos + tc.noise_level * torch.randn_like(xs.pos)
-                        dataset_batch[b].x = xs.to_packed()
+                        states_batch[b] = xs
 
                         ids_index += n_b
 
-                    batch = collate_graph_batch(dataset_batch)
-                    batch_state = CellState.from_packed(batch.x, dimension)
-                    pred = model(batch_state, batch.edge_index, data_id=data_id, training=True, k=k_batch)
+                    batch_state, batch_edges = CellState.collate(states_batch, edges_batch)
+                    pred = model(batch_state, batch_edges, data_id=data_id, training=True, k=k_batch)
 
             if sim.state_type == 'sequence':
                 loss = (pred - y_batch).norm(2)
@@ -361,12 +347,10 @@ def data_train_cell(config, erase, best_model, device, log_file=None):
                 else:
                     loss = (pred - y_batch).norm(2)
             elif time_step > 1:
-                x_batch_state = CellState.from_packed(x_batch, dimension)
-                pos_batch = x_batch_state.pos
-                vel_batch = x_batch_state.vel
+                pos_batch = batch_state.pos
+                vel_batch = batch_state.vel
                 if mc.prediction == '2nd_derivative':
-                    x_pos_pred = pos_batch + delta_t * time_step * (
-                                vel_batch + delta_t * time_step * pred * ynorm)
+                    x_pos_pred = pos_batch + delta_t * time_step * (vel_batch + delta_t * time_step * pred * ynorm)
                 else:
                     x_pos_pred = pos_batch + delta_t * time_step * pred * ynorm
 
@@ -388,28 +372,26 @@ def data_train_cell(config, erase, best_model, device, log_file=None):
             if N % plot_frequency == 0:
                 avg_loss = total_loss / (N + 1) / n_cells
                 postfix = f'loss={avg_loss:.6f}'
-                if last_psi_r2 is not None:
-                    c = r2_color(last_psi_r2)
-                    postfix += f' {c}R²={last_psi_r2:.3f}{ANSI_RESET}'
+                if last_lin_edge_r2 is not None:
+                    c = r2_color(last_lin_edge_r2)
+                    postfix += f' {c}R²={last_lin_edge_r2:.3f}{ANSI_RESET}'
                 pbar.set_postfix_str(postfix)
                 logger.info(f'Epoch {epoch}  iter {N + 1}  avg loss: {avg_loss:.6f}')
 
-            if (N % plot_frequency == 0) or (N == 0):
-                loss_dict['loss'].append(loss.item() / n_cells)
-
             regularizer.finalize_iteration()
 
-            if ((epoch < 30) & (N % plot_frequency == 0)) | (N == 0):
+            if (N % plot_frequency == 0):
+                loss_dict['loss'].append(loss.item() / n_cells)
                 plot_loss_components(loss_dict, regularizer.get_history(), log_dir, epoch=epoch, Niter=Niter)
-                psi_r2 = plot_training(config=config, pred=pred, gt=y_batch, log_dir=log_dir,
+                lin_edge_r2 = plot_training(config=config, pred=pred, gt=y_batch, log_dir=log_dir,
                               epoch=epoch, N=N, x=x_plot, model=model, n_nodes=0, n_node_types=0, index_nodes=0,
                               dataset_num=1,
                               index_cells=index_cells, n_cells=n_cells,
                               n_cell_types=n_cell_types, ynorm=ynorm, cmap=cmap, axis=True, device=device)
-                if psi_r2 is not None:
-                    last_psi_r2 = psi_r2
+                if lin_edge_r2 is not None:
+                    last_lin_edge_r2 = lin_edge_r2
                     with open(metrics_log_path, 'a') as f:
-                        f.write(f'{epoch},{N},{psi_r2:.6f},{loss.item() / n_cells:.6f}\n')
+                        f.write(f'{epoch},{N},{lin_edge_r2:.6f},{loss.item() / n_cells:.6f}\n')
                 torch.save({'model_state_dict': model.state_dict(), 'optimizer_state_dict': optimizer.state_dict()},
                            os.path.join(log_dir, 'models', f'best_model_with_{n_runs - 1}_graphs_{epoch}_{N}.pt'))
                 if has_field:
@@ -426,18 +408,18 @@ def data_train_cell(config, erase, best_model, device, log_file=None):
                    os.path.join(log_dir, 'models', f'best_model_with_{n_runs - 1}_graphs_{epoch}.pt'))
 
         r2_str = ''
-        if last_psi_r2 is not None:
-            c = r2_color(last_psi_r2)
-            r2_str = f'  {c}psi_R2: {last_psi_r2:.4f}{ANSI_RESET}'
-        print("Epoch {}. Loss: {:.6f}  Regul: {:.6f}{}".format(epoch, total_loss / n_cells, total_loss_regul / n_cells, r2_str))
-        logger.info("Epoch {}. Loss: {:.6f}  Regul: {:.6f}".format(epoch, total_loss / n_cells, total_loss_regul / n_cells))
-        if last_psi_r2 is not None:
-            logger.info(f"psi_R2: {last_psi_r2:.6f}")
+        if last_lin_edge_r2 is not None:
+            c = r2_color(last_lin_edge_r2)
+            r2_str = f'  {c}lin_edge_R2: {last_lin_edge_r2:.4f}{ANSI_RESET}'
+        print("Epoch {}. loss: {:.6f}  regul: {:.6f}{}".format(epoch, total_loss / n_cells, total_loss_regul / n_cells, r2_str))
+        logger.info("epoch {}. Loss: {:.6f}  regul: {:.6f}".format(epoch, total_loss / n_cells, total_loss_regul / n_cells))
+        if last_lin_edge_r2 is not None:
+            logger.info(f"lin_edge_R2: {last_lin_edge_r2:.6f}")
         list_loss.append(total_loss / n_cells)
         torch.save(list_loss, os.path.join(log_dir, 'loss.pt'))
 
         scheduler.step()
-        logger.info(f'Epoch {epoch + 1}, Learning Rate: {scheduler.get_last_lr()[0]}')
+        logger.info(f'epoch {epoch + 1}, Learning Rate: {scheduler.get_last_lr()[0]}')
 
         from cell_gnn.figure_style import default_style as fig_style
         fig = plt.figure(figsize=(12, 10), facecolor=fig_style.background)
@@ -522,8 +504,8 @@ def data_train_cell(config, erase, best_model, device, log_file=None):
     if log_file:
         log_file.write(f"training_final_loss={total_loss / n_cells:.6f}\n")
         log_file.write(f"training_accuracy={accuracy:.4f}\n")
-        if last_psi_r2 is not None:
-            log_file.write(f"training_psi_R2={last_psi_r2:.6f}\n")
+        if last_lin_edge_r2 is not None:
+            log_file.write(f"training_lin_edge_R2={last_lin_edge_r2:.6f}\n")
         log_file.write(f"training_time_min={training_time:.1f}\n")
 
 
@@ -555,7 +537,6 @@ def data_test_cell(config=None, config_file=None, visualize=False, style='color 
     min_radius = sim.min_radius
     n_cell_types = sim.n_cell_types
     delta_t = sim.delta_t
-    time_window = tc.time_window
     time_step = tc.time_step
     sub_sampling = sim.sub_sampling
     dimension = sim.dimension
@@ -600,8 +581,6 @@ def data_test_cell(config=None, config_file=None, visualize=False, style='color 
         x_raw = torch.load(f'graphs_data/{dataset_name}/x_list_{run}.pt', map_location=device)
         y_raw = torch.load(f'graphs_data/{dataset_name}/y_list_{run}.pt', map_location=device)
         x_ts = CellTimeSeries.from_packed(x_raw, dimension)
-        # mutable packed copy for rollout write-back (time_window)
-        x_packed = x_raw.clone().to(device)
         ynorm = torch.load(f'{log_dir}/ynorm.pt', map_location=device, weights_only=True)
         vnorm = torch.load(f'{log_dir}/vnorm.pt', map_location=device, weights_only=True)
         if vnorm == 0:
@@ -610,9 +589,6 @@ def data_test_cell(config=None, config_file=None, visualize=False, style='color 
         x_ts = load_simulation_data(f'graphs_data/{dataset_name}/x_list_{run}', dimension).to(device)
         y_raw_np = load_raw_array(f'graphs_data/{dataset_name}/y_list_{run}')
         y_raw = torch.tensor(y_raw_np, dtype=torch.float32, device=device)
-        # mutable packed copy for rollout write-back (time_window)
-        # reconstruct (T, N, C) packed tensor from timeseries fields
-        x_packed = torch.stack([x_ts.frame(t).to_packed() for t in range(x_ts.n_frames)])
         x0_frame = x_ts.frame(0)
         if ('PDE_MLPs' not in mc.cell_model_name) & ('PDE_F' not in mc.cell_model_name) & ('PDE_M' not in mc.cell_model_name):
             n_cells = int(x0_frame.n_cells / ratio)
@@ -719,14 +695,8 @@ def data_test_cell(config=None, config_file=None, visualize=False, style='color 
     angle_list = []
     time.sleep(1)
 
-    if time_window > 0:
-        start_it = time_window
-        stop_it = n_frames - 1
-    else:
-        start_it = 0
-        stop_it = n_frames - 1
-
     start_it = 0
+    stop_it = n_frames - 1
 
     x = x_ts.frame(start_it).to(device)
     n_cells = x.n_cells
@@ -772,24 +742,11 @@ def data_test_cell(config=None, config_file=None, visualize=False, style='color 
                 field = model_f(time=it / n_frames) ** 2
                 x.field = field
 
-            if time_window > 0:
-                xt = []
-                for t in range(time_window):
-                    x_ = x_packed[it - t].clone().detach()
-                    xt.append(x_[:, :])
-                dataset = GraphData(x=xt, edge_index=edge_index)
-            else:
-                dataset = GraphData(x=x.to_packed(), edge_index=edge_index)
-
             if 'test_simulation' in test_mode:
                 y = y0 / ynorm
                 pred = y
             else:
-                if time_window > 0:
-                    test_state = CellState.from_packed(dataset.x, dimension)
-                else:
-                    test_state = x
-                pred = model(test_state, dataset.edge_index, data_id=data_id, training=False, has_field=has_field, k=it)
+                pred = model(x, edge_index, data_id=data_id, training=False, has_field=has_field, k=it)
                 y = pred
 
             if sub_sampling > 1:
@@ -831,12 +788,6 @@ def data_test_cell(config=None, config_file=None, visualize=False, style='color 
 
             if 'inference' in test_mode:
                 x_inference_list.append(x)
-
-            if (time_window > 1) & ('plot_data' not in test_mode):
-                moving_pos = torch.argwhere(x.cell_type != 0)
-                # write pos + vel back into packed array for time_window lookback
-                pos_vel = torch.cat([x.pos, x.vel], dim=1).clone().detach()
-                x_packed[it + 1, moving_pos.squeeze(), 1:1 + 2 * dimension] = pos_vel[moving_pos.squeeze()]
 
         # vizualization
         if 'plot_data' in test_mode:
@@ -881,6 +832,10 @@ def data_test_cell(config=None, config_file=None, visualize=False, style='color 
                 ei_np = to_numpy(edge_index)
                 fwd = ei_np[0] < ei_np[1]
                 ei_fwd = ei_np[:, fwd]
+                # filter out edges that wrap around periodic boundaries
+                dx = pos_all_np[ei_fwd[1]] - pos_all_np[ei_fwd[0]]
+                no_wrap = np.sqrt((dx ** 2).sum(axis=1)) < max_radius * 1.1
+                ei_fwd = ei_fwd[:, no_wrap]
 
             # === helper: draw edges on a 2D axis ===
             def _draw_edges_2d(ax, pos_np, ei):
@@ -890,7 +845,7 @@ def data_test_cell(config=None, config_file=None, visualize=False, style='color 
                 src_pos = pos_np[ei[0]]
                 dst_pos = pos_np[ei[1]]
                 segments = np.stack([src_pos[:, :2], dst_pos[:, :2]], axis=1)
-                lc = LineCollection(segments, colors='#888888', linewidths=0.3, alpha=0.3)
+                lc = LineCollection(segments, colors='#888888', linewidths=1.0, alpha=0.2)
                 ax.add_collection(lc)
 
             # === helper: draw edges on a 3D axis ===
@@ -901,7 +856,7 @@ def data_test_cell(config=None, config_file=None, visualize=False, style='color 
                 src_pos = pos_np[ei[0]]
                 dst_pos = pos_np[ei[1]]
                 segments = np.stack([src_pos, dst_pos], axis=1)
-                lc = Line3DCollection(segments, colors='#888888', linewidths=0.3, alpha=0.3)
+                lc = Line3DCollection(segments, colors='#888888', linewidths=1.0, alpha=0.2)
                 ax.add_collection3d(lc)
 
             # === helper: scatter cells on a 2D axis ===

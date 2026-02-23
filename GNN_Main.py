@@ -20,6 +20,7 @@ if __name__ == "__main__":
     parser.add_argument("-o", "--option", nargs="+", help="Option that takes multiple values")
     parser.add_argument("--n_epochs", type=int, default=None, help="Override n_epochs from config")
     parser.add_argument("--erase", action="store_true", help="Erase previous training results")
+    parser.add_argument("--edges", action="store_true", help="Plot edges in generate and test visualizations")
 
     args = parser.parse_args()
 
@@ -34,8 +35,8 @@ if __name__ == "__main__":
             best_model = None
     else:
         best_model = None
-        task = 'generate'
-        config_list = ['arbitrary_3']
+        task = 'train'
+        config_list = ['dicty']
 
     for config_file_ in config_list:
         print(" ")
@@ -53,12 +54,13 @@ if __name__ == "__main__":
         print(f"\033[92mdevice  {device}\033[0m")
 
         if "generate" in task:
+            gen_style = "color edges" if args.edges else "color"
             data_generate(
                 config,
                 device=device,
                 visualize=True,
                 run_vizualized=0,
-                style="color edges",
+                style=gen_style,
                 alpha=1,
                 erase=True,
                 save=True,
@@ -80,10 +82,11 @@ if __name__ == "__main__":
             )
 
         if "test" in task:
+            test_style = "color residual true edges" if args.edges else "color residual true"
             data_test(
                 config=config,
                 visualize=True,
-                style="color residual true",
+                style=test_style,
                 verbose=False,
                 best_model='best',
                 run=0,

@@ -283,9 +283,9 @@ def analyze_edge_function(rr=[], vizualize=False, config=None, model_MLP=[], mod
 # --------------------------------------------------------------------------- #
 
 def plot_training(config, pred, gt, log_dir, epoch, N, x, index_cells, n_cells, n_cell_types, model, n_nodes, n_node_types, index_nodes, dataset_num, ynorm, cmap, axis, device):
-    """Plot training diagnostics. Returns psi R² mean or None if unavailable."""
+    """Plot training diagnostics. Returns lin_edge R² mean or None if unavailable."""
 
-    psi_r2 = None
+    lin_edge_r2 = None
     style = default_style
     simulation_config = config.simulation
     train_config = config.training
@@ -462,8 +462,8 @@ def plot_training(config, pred, gt, log_dir, epoch, N, x, index_cells, n_cells, 
                 if r2_values is not None:
                     valid = r2_values[~np.isnan(r2_values)]
                     if len(valid) > 0:
-                        psi_r2 = float(valid.mean())
-                        ax.text(0.02, 0.98, f'R²={psi_r2:.3f}±{valid.std():.3f}',
+                        lin_edge_r2 = float(valid.mean())
+                        ax.text(0.02, 0.98, f'R²={lin_edge_r2:.3f}±{valid.std():.3f}',
                                 transform=ax.transAxes, verticalalignment='top',
                                 fontsize=style.font_size,
                                 color=style.foreground)
@@ -476,7 +476,7 @@ def plot_training(config, pred, gt, log_dir, epoch, N, x, index_cells, n_cells, 
                     ax.set_ylim(plot_config.ylim)
                 ax.axhline(y=0, color='grey', linewidth=0.5, linestyle='-')
                 style.montage_xlabel(ax, r'$r$')
-                style.montage_ylabel(ax, r'$\psi(r)$')
+                style.montage_ylabel(ax, r'learned $\mathrm{MLP}_1$')
                 plt.tight_layout()
                 style.savefig(fig, f"./{log_dir}/tmp_training/function/MLP1/function_{epoch}_{N}.png")
 
@@ -513,8 +513,8 @@ def plot_training(config, pred, gt, log_dir, epoch, N, x, index_cells, n_cells, 
                 if r2_values is not None:
                     valid = r2_values[~np.isnan(r2_values)]
                     if len(valid) > 0:
-                        psi_r2 = float(valid.mean())
-                        ax.text(0.02, 0.98, f'R²={psi_r2:.3f}±{valid.std():.3f}',
+                        lin_edge_r2 = float(valid.mean())
+                        ax.text(0.02, 0.98, f'R²={lin_edge_r2:.3f}±{valid.std():.3f}',
                                 transform=ax.transAxes, verticalalignment='top',
                                 fontsize=style.font_size,
                                 color=style.foreground)
@@ -533,11 +533,11 @@ def plot_training(config, pred, gt, log_dir, epoch, N, x, index_cells, n_cells, 
                 fmt = lambda x, pos: '{:.1f}e-5'.format((x) * 1e5, pos)
                 ax.yaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(fmt))
                 style.montage_xlabel(ax, r'$r$')
-                style.montage_ylabel(ax, r'$\psi(r)$')
+                style.montage_ylabel(ax, r'learned $\mathrm{MLP}_1$')
                 plt.tight_layout()
                 style.savefig(fig, f"./{log_dir}/tmp_training/function/MLP1/function_{epoch}_{N}.png")
 
-    return psi_r2
+    return lin_edge_r2
 
 
 # --------------------------------------------------------------------------- #
@@ -887,7 +887,7 @@ def plot_training_summary_panels(fig, log_dir, model, config, n_cells, n_cell_ty
     style.montage_xlabel(ax_umap, 'UMAP 0')
     style.montage_ylabel(ax_umap, 'UMAP 1')
     style.montage_annotate(ax_umap,
-                           f'UMAP of $\\psi(r)$ curves\n'
+                           'UMAP of learned $\\mathrm{MLP}_1$ curves\n'
                            f'input: {func_list.shape[1]} radial samples per cell\n'
                            f'n_neighbors={n_neighbors}  min_dist={min_dist}',
                            (0.02, 0.98), verticalalignment='top')
@@ -1038,7 +1038,7 @@ def plot_residual_field_3d(pos, residual, frame, dimension, log_dir, cmap, sim):
         n = pos.shape[0]
         step_q = max(1, n // 300)
         idx = np.arange(0, n, step_q)
-        scale = sim.max_radius * 0.5
+        scale = sim.max_radius * 0.05
         ax1.quiver(pos[idx, 0], pos[idx, 1], pos[idx, 2],
                    residual[idx, 0] * scale, residual[idx, 1] * scale, residual[idx, 2] * scale,
                    color='blue', alpha=0.6, arrow_length_ratio=0.3, linewidth=0.8)

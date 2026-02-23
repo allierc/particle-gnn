@@ -118,7 +118,6 @@ class CellGNN(nn.Module):
         self.max_radius = simulation_config.max_radius
         self.rotation_augmentation = train_config.rotation_augmentation
         self.reflection_augmentation = train_config.reflection_augmentation
-        self.time_window = train_config.time_window
         self.recursive_loop = train_config.recursive_loop
         self.state = simulation_config.state_type
         self.remove_self = train_config.remove_self

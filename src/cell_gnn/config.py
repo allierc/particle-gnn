@@ -243,8 +243,6 @@ class TrainingConfig(BaseModel):
 
     pretrained_model: str = ""
 
-    time_window: int = 0
-
     n_runs: int = 2
     seed: int = 42
     clamp: float = 0

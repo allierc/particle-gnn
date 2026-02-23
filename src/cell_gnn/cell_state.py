@@ -183,6 +183,37 @@ class CellState:
         d = _unpack(x, dimension)
         return cls(**d)
 
+    @classmethod
+    def collate(cls, states: list[CellState],
+                edge_indices: list[torch.Tensor]
+                ) -> tuple[CellState, torch.Tensor]:
+        """batch multiple CellState objects into one, offsetting edge indices.
+
+        Args:
+            states: list of CellState (one per graph in the batch).
+            edge_indices: matching list of (2, E_i) edge index tensors.
+
+        Returns:
+            (batched_state, batched_edge_index)
+        """
+        if len(states) == 1:
+            return states[0], edge_indices[0]
+
+        offset = 0
+        edge_list = []
+        for s, ei in zip(states, edge_indices):
+            edge_list.append(ei + offset)
+            offset += s.n_cells
+
+        has_field = states[0].field is not None
+        return cls(
+            index=torch.cat([s.index for s in states]),
+            pos=torch.cat([s.pos for s in states]),
+            vel=torch.cat([s.vel for s in states]),
+            cell_type=torch.cat([s.cell_type for s in states]),
+            field=torch.cat([s.field for s in states]) if has_field else None,
+        ), torch.cat(edge_list, dim=1)
+
     def to_packed(self) -> torch.Tensor:
         """pack back into (N, C) tensor for legacy compatibility."""
         return _pack(self.index, self.pos, self.vel, self.cell_type,

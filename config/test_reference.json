@@ -1,55 +1,40 @@
 {
-  "date": "2026-02-21",
-  "commit": "049864b",
+  "date": "2026-02-23",
+  "commit": "80e7a5b",
   "configs": {
     "arbitrary": {
       "metrics": {
-        "rollout_RMSE_mean": 0.0056976032447064425,
-        "rollout_RMSE_final": 0.012457559816539288,
-        "rollout_geomloss_mean": 6.116984888789645e-06,
-        "rollout_geomloss_final": 3.9819184166844934e-05,
-        "training_final_loss": 32.667616,
-        "training_accuracy": 0.985
+        "rollout_RMSE_mean": 0.0055021181612219154,
+        "rollout_RMSE_final": 0.012140762060880661,
+        "training_accuracy": 0.977
       },
       "thresholds": {
         "rollout_RMSE_mean": 0.01,
         "rollout_RMSE_final": 0.05,
-        "rollout_geomloss_mean": 0.005,
-        "rollout_geomloss_final": 0.01,
         "training_accuracy": 0.05
       }
     },
     "boids": {
       "metrics": {
-        "rollout_RMSE_mean": 0.08292981483477874,
-        "rollout_RMSE_final": 0.21666371822357178,
-        "rollout_geomloss_mean": 0.0012100300861408618,
-        "rollout_geomloss_final": 0.003546288702636957,
-        "training_final_loss": 341.821061,
-        "training_accuracy": 0.993
+        "rollout_RMSE_mean": 0.08483862561422223,
+        "rollout_RMSE_final": 0.22223006188869476,
+        "training_accuracy": 0.995
       },
       "thresholds": {
         "rollout_RMSE_mean": 0.01,
         "rollout_RMSE_final": 0.05,
-        "rollout_geomloss_mean": 0.005,
-        "rollout_geomloss_final": 0.01,
         "training_accuracy": 0.05
       }
     },
     "gravity": {
       "metrics": {
-        "rollout_RMSE_mean": 1.2897474153410895,
-        "rollout_RMSE_final": 2.971754789352417,
-        "rollout_geomloss_mean": 0.04160086826081668,
-        "rollout_geomloss_final": 0.15644830465316772,
-        "training_final_loss": 1386.271666,
-        "training_accuracy": 0.641
+        "rollout_RMSE_mean": 1.2970558463530297,
+        "rollout_RMSE_final": 3.060546398162842,
+        "training_accuracy": 0.629
       },
       "thresholds": {
         "rollout_RMSE_mean": 0.01,
         "rollout_RMSE_final": 0.05,
-        "rollout_geomloss_mean": 0.005,
-        "rollout_geomloss_final": 0.01,
         "training_accuracy": 0.05
       }
     }
