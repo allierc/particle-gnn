@@ -438,10 +438,6 @@ def plot_training(config, pred, gt, log_dir, epoch, N, x, index_cells, n_cells, 
                                               simulation_config.max_radius, device,
                                               dimension=simulation_config.dimension)
 
-                # Plot true psi curves (light gray, behind learned)
-                _plot_true_psi(ax, rr, config, n_cell_types, cmap, device)
-
-                # Plot with LineCollection
                 rr_np = to_numpy(rr)
                 ynorm_np = to_numpy(ynorm)
                 if isinstance(x, CellState):
@@ -449,9 +445,24 @@ def plot_training(config, pred, gt, log_dir, epoch, N, x, index_cells, n_cells, 
                 else:
                     type_arr = to_numpy(CellState.from_packed(x, dimension).cell_type[:n_cells]).astype(int)
 
+                # Plot predicted curves first (behind)
                 subsample = 5 if n_runs <= 5 else 1
                 _plot_curves_fast(ax, rr_np, to_numpy(func_list), type_arr, cmap,
                                   ynorm=ynorm_np, subsample=subsample, alpha=0.25, linewidth=2)
+
+                # Plot true psi curves on top (thick)
+                true_curves = _get_true_psi(rr, config, n_cell_types, device)
+                _plot_true_psi(ax, rr_np, true_curves, cmap)
+
+                # Per-curve R² metric
+                r2_values = _compute_curve_r2(to_numpy(func_list), type_arr, true_curves, ynorm=ynorm_np)
+                if r2_values is not None:
+                    valid = r2_values[~np.isnan(r2_values)]
+                    if len(valid) > 0:
+                        r2_mean, r2_std = valid.mean(), valid.std()
+                        print(f'  psi R²: {r2_mean:.4f} +/- {r2_std:.4f}  (n={len(valid)})')
+                        style.montage_annotate(ax, f'R²={r2_mean:.3f}±{r2_std:.3f}',
+                                               (0.02, 0.02), verticalalignment='bottom')
 
                 if model_config.cell_model_name == 'gravity_ode':
                     plt.xlim([0, 0.02])
@@ -476,16 +487,27 @@ def plot_training(config, pred, gt, log_dir, epoch, N, x, index_cells, n_cells, 
                                               max_radius_plot, device,
                                               dimension=simulation_config.dimension)
 
-                # Plot true psi curves (light gray, behind learned)
-                _plot_true_psi(ax, rr, config, n_cell_types, cmap, device)
-
-                # Plot with LineCollection
                 rr_np = to_numpy(rr)
                 ynorm_np = to_numpy(ynorm)
                 type_arr = np.array([int(n // (n_cells / n_cell_types)) for n in range(n_cells)])
 
+                # Plot predicted curves first (behind)
                 _plot_curves_fast(ax, rr_np, to_numpy(func_list), type_arr, cmap,
                                   ynorm=ynorm_np, subsample=5, alpha=1.0, linewidth=2)
+
+                # Plot true psi curves on top (thick)
+                true_curves = _get_true_psi(rr, config, n_cell_types, device)
+                _plot_true_psi(ax, rr_np, true_curves, cmap)
+
+                # Per-curve R² metric
+                r2_values = _compute_curve_r2(to_numpy(func_list), type_arr, true_curves, ynorm=ynorm_np)
+                if r2_values is not None:
+                    valid = r2_values[~np.isnan(r2_values)]
+                    if len(valid) > 0:
+                        r2_mean, r2_std = valid.mean(), valid.std()
+                        print(f'  psi R²: {r2_mean:.4f} +/- {r2_std:.4f}  (n={len(valid)})')
+                        style.montage_annotate(ax, f'R²={r2_mean:.3f}±{r2_std:.3f}',
+                                               (0.02, 0.02), verticalalignment='bottom')
 
                 if not do_tracking:
                     plt.ylim(config.plotting.ylim)
@@ -639,38 +661,28 @@ def batched_sparsity_mlp_eval(model, rr, n_cells, config, device):
 #  True interaction function overlay
 # --------------------------------------------------------------------------- #
 
-def _plot_true_psi(ax, rr, config, n_cell_types, cmap, device):
-    """Plot true psi interaction curves for each cell type.
+def _get_true_psi(rr, config, n_cell_types, device):
+    """Compute true psi interaction curves for each cell type.
 
-    Loads the ground-truth simulator via ``choose_model`` and evaluates
-    ``psi(rr, p[n])`` for each type, drawing thick solid lines.
-
-    Args:
-        ax: matplotlib Axes to draw on.
-        rr: (n_pts,) tensor of radial sample points.
-        config: CellGNNConfig.
-        n_cell_types: int.
-        cmap: CustomColorMap instance.
-        device: torch device.
+    Returns:
+        dict mapping type_index -> (n_pts,) numpy array, or empty dict if
+        no ground truth is available (external data).
     """
-    # Skip for external data — no ground truth function
     if config.data_folder_name != 'none':
-        return
+        return {}
 
     from cell_gnn.generators.utils import choose_model
 
     try:
         true_model, _, _ = choose_model(config, device=device)
     except Exception:
-        return
+        return {}
     config_model = config.graph_model.cell_model_name
     p = true_model.p
-    # Ensure p is 2D: (n_cell_types, n_params)
     if p.dim() == 1:
         p = p.unsqueeze(0)
 
-    rr_np = to_numpy(rr)
-
+    true_curves = {}
     for n in range(n_cell_types):
         with torch.no_grad():
             if 'arbitrary_ode' in config_model:
@@ -680,9 +692,48 @@ def _plot_true_psi(ax, rr, config, n_cell_types, cmap, device):
                 psi_n = true_model.psi(rr, p[n], func=func_type)
             else:
                 psi_n = true_model.psi(rr, p[n])
+        true_curves[n] = to_numpy(psi_n).flatten()
 
-        psi_np = to_numpy(psi_n).flatten()
-        ax.plot(rr_np, psi_np, color='lightgray', linewidth=4, alpha=0.5)
+    return true_curves
+
+
+def _plot_true_psi(ax, rr_np, true_curves, cmap):
+    """Plot true psi curves on top of predicted (thick, per-type color)."""
+    for n, psi_np in true_curves.items():
+        ax.plot(rr_np, psi_np, color=cmap.color(n), linewidth=6, alpha=0.5)
+
+
+def _compute_curve_r2(func_list_np, type_arr, true_curves, ynorm=1.0):
+    """Compute per-curve R² between predicted and ground-truth psi.
+
+    Args:
+        func_list_np: (N, n_pts) predicted curves (before ynorm scaling)
+        type_arr: (N,) int array of cell type labels
+        true_curves: dict type_index -> (n_pts,) true curve
+        ynorm: scalar or array to multiply predicted curves by
+
+    Returns:
+        r2_values: (N,) numpy array of R² per curve, or None if no true curves
+    """
+    if not true_curves:
+        return None
+
+    N = func_list_np.shape[0]
+    ynorm_val = float(ynorm) if np.isscalar(ynorm) else np.asarray(ynorm)
+    r2_values = np.full(N, np.nan)
+
+    for i in range(N):
+        t = int(type_arr[i])
+        if t not in true_curves:
+            continue
+        y_true = true_curves[t]
+        y_pred = func_list_np[i] * ynorm_val
+        ss_res = np.sum((y_true - y_pred) ** 2)
+        ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)
+        if ss_tot > 0:
+            r2_values[i] = 1.0 - ss_res / ss_tot
+
+    return r2_values
 
 
 # --------------------------------------------------------------------------- #
@@ -807,27 +858,7 @@ def plot_training_summary_panels(fig, log_dir, model, config, n_cells, n_cell_ty
     print(f'accuracy: {np.round(accuracy, 3)}   n_clusters: {n_clusters}')
     logger.info(f'accuracy: {np.round(accuracy, 3)}    n_clusters: {n_clusters}')
 
-    # --- Panel 4: UMAP scatter (drawn directly in montage figure) ---
-    ax4 = fig.add_subplot(2, 2, 4)
-    style.clean_ax(ax4)
-    for n in np.unique(new_labels):
-        pos = np.array(np.argwhere(new_labels == n).squeeze().astype(int))
-        if pos.size > 0:
-            ax4.scatter(proj_embedding[pos, 0], proj_embedding[pos, 1], s=5)
-    # Use montage-consistent fonts (panels 1-3 are loaded as images with
-    # montage_figure() sizing; panel 4 must match visually).
-    ax4.set_xlabel('UMAP 0', fontsize=style.montage_label_font_size,
-                   color=style.foreground)
-    ax4.set_ylabel('UMAP 1', fontsize=style.montage_label_font_size,
-                   color=style.foreground)
-    ax4.tick_params(labelsize=style.montage_tick_font_size)
-    style.montage_annotate(ax4,
-                           f'UMAP of $\\psi(r)$ curves\n'
-                           f'input: {func_list.shape[1]} radial samples per cell\n'
-                           f'n_neighbors={n_neighbors}  min_dist={min_dist}',
-                           (0.02, 0.98), verticalalignment='top')
-
-    # --- Save UMAP plot separately ---
+    # --- Save UMAP plot as standalone montage panel ---
     os.makedirs(f'./{log_dir}/tmp_training/umap', exist_ok=True)
     fig_umap, ax_umap = style.montage_figure()
     for n in np.unique(new_labels):
@@ -842,7 +873,11 @@ def plot_training_summary_panels(fig, log_dir, model, config, n_cells, n_cell_ty
                            f'n_neighbors={n_neighbors}  min_dist={min_dist}',
                            (0.02, 0.98), verticalalignment='top')
     plt.tight_layout()
-    style.savefig(fig_umap, f'./{log_dir}/tmp_training/umap/{epoch}.tif')
+    umap_path = f'./{log_dir}/tmp_training/umap/{epoch}.tif'
+    style.savefig(fig_umap, umap_path)
+
+    # --- Panel 4: load UMAP as raster (consistent with panels 1-3) ---
+    _load_panel(fig, 4, umap_path)
 
     # --- Compute sparsified embedding for return ---
     model_a_ = model.a[0].clone().detach()
