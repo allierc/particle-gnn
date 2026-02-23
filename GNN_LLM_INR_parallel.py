@@ -588,6 +588,15 @@ Write the planned mutations to the working memory file."""
                     if os.path.exists(results_path):
                         shutil.copy2(results_path, analysis_log_paths[slot])
 
+                    # Copy video to exploration videos folder
+                    video_src = f'./{inr_log_dir}/tmp_training/inr/{field_name}_gt_vs_pred.mp4'
+                    if os.path.exists(video_src):
+                        video_dir = f"{exploration_dir}/videos"
+                        os.makedirs(video_dir, exist_ok=True)
+                        iteration = iterations[slot_idx]
+                        video_dst = f"{video_dir}/iter_{iteration:03d}_slot_{slot:02d}.mp4"
+                        shutil.copy2(video_src, video_dst)
+
                     job_results[slot] = True
                 except Exception as e:
                     print(f"\033[91m  slot {slot}: INR training failed: {e}\033[0m")

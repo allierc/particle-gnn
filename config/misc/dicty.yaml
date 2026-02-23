@@ -55,7 +55,7 @@ training:
   small_init_batch_size: False
   sparsity: "none"
   rotation_augmentation: True
-  data_augmentation_loop: 20
+  data_augmentation_loop: 75
   learning_rate_start: 1.0E-4
   learning_rate_embedding_start: 1.0E-5
 

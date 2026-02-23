@@ -5,6 +5,8 @@ Optional gradient mode: learn scalar potential phi where -grad(phi) = target fie
 """
 
 import os
+import shutil
+import subprocess
 import time
 import glob
 import numpy as np
@@ -111,6 +113,108 @@ def _predict_all(model, inr_cfg, n_frames, n_cells, n_components, dimension,
                     results.append(model(inp).detach())
 
     return torch.stack(results, dim=0)
+
+
+def _generate_video(gt_np, pred_np, pos_data, field_name, n_frames, n_components,
+                    output_folder, step_video=10, fps=30):
+    """Generate a GT vs Pred MP4 video after INR training.
+
+    Creates two-panel scatter plots (GT | Pred) for every ``step_video``-th
+    frame and stitches them into an MP4 via ffmpeg.
+
+    Args:
+        gt_np: ground truth array (T, N, C)
+        pred_np: predicted array (T, N, C)
+        pos_data: positions array (T, N, dim)
+        field_name: name of the field being visualised
+        n_frames: number of frames
+        n_components: number of field components
+        output_folder: directory for output files
+        step_video: sample every N-th frame (default 10)
+        fps: frames per second in output video (default 30)
+    """
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    if shutil.which('ffmpeg') is None:
+        print('  ffmpeg not found – skipping video generation')
+        return None
+
+    video_frames_dir = os.path.join(output_folder, 'video_frames')
+    os.makedirs(video_frames_dir, exist_ok=True)
+    for f in glob.glob(f'{video_frames_dir}/*.png'):
+        os.remove(f)
+
+    # Compute field magnitude for colouring
+    if n_components > 1:
+        gt_mag = np.linalg.norm(gt_np, axis=2)       # (T, N)
+        pred_mag = np.linalg.norm(pred_np, axis=2)
+    else:
+        gt_mag = gt_np[:, :, 0]
+        pred_mag = pred_np[:, :, 0]
+
+    vmin = np.percentile(gt_mag, 2)
+    vmax = np.percentile(gt_mag, 98)
+
+    frame_indices = range(0, n_frames, step_video)
+    for frame_count, k in enumerate(frame_indices):
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4.5))
+
+        pos = pos_data[k]  # (N, dim)
+        x, y = pos[:, 0], pos[:, 1]
+
+        sc1 = ax1.scatter(x, y, c=gt_mag[k], s=1, cmap='viridis', vmin=vmin, vmax=vmax)
+        ax1.set_title(f'GT  frame {k}', fontsize=10)
+        ax1.set_aspect('equal')
+        ax1.set_xticks([]); ax1.set_yticks([])
+        plt.colorbar(sc1, ax=ax1)
+
+        sc2 = ax2.scatter(x, y, c=pred_mag[k], s=1, cmap='viridis', vmin=vmin, vmax=vmax)
+        ax2.set_title(f'Pred  frame {k}', fontsize=10)
+        ax2.set_aspect('equal')
+        ax2.set_xticks([]); ax2.set_yticks([])
+        plt.colorbar(sc2, ax=ax2)
+
+        fig.suptitle(f'{field_name}  ({frame_count + 1}/{len(frame_indices)})', fontsize=11)
+        plt.tight_layout()
+        plt.savefig(f'{video_frames_dir}/frame_{frame_count:06d}.png', dpi=100)
+        plt.close()
+
+    # Stitch PNGs into MP4
+    video_path = os.path.join(output_folder, f'{field_name}_gt_vs_pred.mp4')
+    ffmpeg_cmd = [
+        'ffmpeg', '-y', '-loglevel', 'error',
+        '-framerate', str(fps),
+        '-i', f'{video_frames_dir}/frame_%06d.png',
+        '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
+        '-c:v', 'libx264', '-crf', '23', '-pix_fmt', 'yuv420p',
+        video_path,
+    ]
+    try:
+        result = subprocess.run(ffmpeg_cmd, capture_output=True, text=True, timeout=300)
+        if result.returncode == 0:
+            size_mb = os.path.getsize(video_path) / 1e6
+            print(f'  video saved: {video_path} ({size_mb:.1f} MB)')
+        else:
+            print(f'  video generation failed: {result.stderr}')
+            video_path = None
+    except subprocess.TimeoutExpired:
+        print('  video generation timed out')
+        video_path = None
+    except Exception as e:
+        print(f'  video generation error: {e}')
+        video_path = None
+
+    # Clean up frame PNGs
+    for f in glob.glob(f'{video_frames_dir}/*.png'):
+        os.remove(f)
+    try:
+        os.rmdir(video_frames_dir)
+    except OSError:
+        pass
+
+    return video_path
 
 
 def data_train_INR(config, device, field_name=None, run=0, erase=False):
@@ -265,21 +369,15 @@ def data_train_INR(config, device, field_name=None, run=0, erase=False):
 
         loss_list.append(loss.item())
 
-        # --- progress report ---
+        # --- progress report (R2 evaluation) ---
         if step > 0 and step % report_interval == 0:
-            pct = step / total_steps * 100
-            elapsed = time.time() - t_start
-            its = step / elapsed
             with torch.no_grad():
                 pred_all = _predict_all(model, inr_cfg, n_frames, n_cells, n_components,
                                         dimension, pos_data, device)
                 gt_all = ground_truth.cpu().numpy().reshape(-1)
                 pred_all_np = pred_all.cpu().numpy().reshape(-1)
                 _, _, r_value, _, _ = linregress(gt_all, pred_all_np)
-                r2 = r_value ** 2
-                last_r2 = r2
-            c = _r2_color(r2)
-            print(f'  {pct:5.1f}% | step {step:6d}/{total_steps} | loss: {loss.item():.6f} | {c}R2: {r2:.4f}{ANSI_RESET} | {its:.1f} it/s')
+                last_r2 = r_value ** 2
 
         # update pbar with color-coded R2
         if step % 1000 == 0:
@@ -336,6 +434,10 @@ def data_train_INR(config, device, field_name=None, run=0, erase=False):
     )
 
     plot_inr_kinograph(gt_np, pred_np, field_name, n_components, n_cells, output_folder)
+
+    # --- post-training video (GT vs Pred, every 10 frames) ---
+    _generate_video(gt_np, pred_np, pos_data, field_name, n_frames, n_components,
+                    output_folder, step_video=10)
 
     # gradient mode: save potential visualization for a few frames
     if gradient_mode:
