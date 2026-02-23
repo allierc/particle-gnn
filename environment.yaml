@@ -1,0 +1,30 @@
+name: cell-gnn
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10.0
+  - pytorch
+  - torchvision
+  - umap-learn
+  - numpy
+  - scipy
+  - ipython
+  - pandas
+  - matplotlib
+  - networkx
+  - prettytable
+  - tqdm
+  - PyYAML
+  - tifffile
+  - pydantic
+  - gputil
+  - pip
+  - imageio
+  - scikit-image
+  - scikit-learn
+  - seaborn
+  - pip:
+      - geomloss
+      - torch_geometric
+      - tables
+      - zarr

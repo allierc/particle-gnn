@@ -656,5 +656,6 @@ def main():
 if __name__ == '__main__':
     main()
 
-
+# python GNN_Test.py --config arbitrary
 # python GNN_Test.py --config arbitrary --no-claude
+# python GNN_Test.py
