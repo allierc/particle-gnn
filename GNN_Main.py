@@ -68,7 +68,7 @@ if __name__ == "__main__":
                 timer=False
             )
 
-        if task == "train":
+        if "train" in task:
             data_train(config=config, erase=args.erase, best_model=best_model, device=device)
 
         if "train_inr" in task:

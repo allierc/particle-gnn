@@ -417,6 +417,14 @@ def plot_training(config, pred, gt, log_dir, epoch, N, x, index_cells, n_cells, 
         ax.add_collection(lc)
         ax.axhline(y=0, color='grey', linewidth=0.5, linestyle='-')
         ax.autoscale_view()
+        if sign_flip < 0:
+            conv_text = '+: repulsive, −: attractive'
+        else:
+            conv_text = '+: attractive, −: repulsive'
+        ax.text(0.02, 0.98, conv_text,
+                transform=ax.transAxes, verticalalignment='top',
+                fontsize=style.font_size * 0.8,
+                color=style.foreground, alpha=0.7)
 
         plt.tight_layout()
         style.savefig(fig, f"./{log_dir}/tmp_training/function/MLP1/function_{epoch}_{N}.png")
@@ -476,6 +484,14 @@ def plot_training(config, pred, gt, log_dir, epoch, N, x, index_cells, n_cells, 
                 if plot_config.ylim is not None:
                     ax.set_ylim(plot_config.ylim)
                 ax.axhline(y=0, color='grey', linewidth=0.5, linestyle='-')
+                if sign_flip < 0:
+                    conv_text = '+: repulsive, −: attractive'
+                else:
+                    conv_text = '+: attractive, −: repulsive'
+                ax.text(0.02, 0.90, conv_text,
+                        transform=ax.transAxes, verticalalignment='top',
+                        fontsize=style.font_size * 0.8,
+                        color=style.foreground, alpha=0.7)
                 style.montage_xlabel(ax, r'$r$')
                 style.montage_ylabel(ax, r'learned $\mathrm{MLP}_1$')
                 plt.tight_layout()
@@ -533,6 +549,14 @@ def plot_training(config, pred, gt, log_dir, epoch, N, x, index_cells, n_cells, 
                 ax.xaxis.set_major_formatter(FormatStrFormatter('%.2f'))
                 fmt = lambda x, pos: '{:.1f}e-5'.format((x) * 1e5, pos)
                 ax.yaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(fmt))
+                if sign_flip < 0:
+                    conv_text = '+: repulsive, −: attractive'
+                else:
+                    conv_text = '+: attractive, −: repulsive'
+                ax.text(0.02, 0.90, conv_text,
+                        transform=ax.transAxes, verticalalignment='top',
+                        fontsize=style.font_size * 0.8,
+                        color=style.foreground, alpha=0.7)
                 style.montage_xlabel(ax, r'$r$')
                 style.montage_ylabel(ax, r'learned $\mathrm{MLP}_1$')
                 plt.tight_layout()
@@ -618,6 +642,15 @@ def plot_training_cell_field(config, has_siren, has_siren_time, model_f, n_frame
 
     _plot_curves_fast(ax, rr_np, to_numpy(func_list), type_arr, cmap,
                       ynorm=ynorm_np * sign_flip, subsample=5, alpha=0.25, linewidth=8)
+
+    if sign_flip < 0:
+        conv_text = '+: repulsive, −: attractive'
+    else:
+        conv_text = '+: attractive, −: repulsive'
+    ax.text(0.02, 0.98, conv_text,
+            transform=ax.transAxes, verticalalignment='top',
+            fontsize=style.font_size * 0.8,
+            color=style.foreground, alpha=0.7)
 
     plt.tight_layout()
     style.savefig(fig, f"./{log_dir}/tmp_training/function/MLP1/{model_name}_function_{epoch}_{N}.png")
