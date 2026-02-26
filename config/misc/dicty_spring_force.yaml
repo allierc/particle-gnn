@@ -1,39 +1,37 @@
-description: "3D overdamped cell cells with pair forces"
-dataset: "dicty"
-data_folder_name: "cell3d_overdamped_N1000_T20_L2_position_pairforce_k250.npz"
+description: "3D overdamped cells with spring repulsion + adhesion"
+dataset: "dicty_spring_force"
 
 simulation:
   dimension: 3
   n_cells: 1000
   n_cell_types: 1
-  n_frames: 10000
-  delta_t: 0.002
-  max_radius: 0.2
+  n_frames: 8000
+  delta_t: 0.005
+  max_radius: 0.14
   min_radius: 0
   sigma: 0.005
   boundary: "periodic"
   dpos_init: 0
-  cell_params: [[1.0, 1.0, 1.0, 1.0]]
-  func_params: [["arbitrary", 0, 0]]
-  
+  cell_params: [[50.0, 0.1, 50.0, 0.14, 0.001, 0.05]]
+  #              k_rep  r0   kadh  r_on  delta  mu_f
+  func_params: [["spring", 0, 0]]
+  noise_model_level: 0
 
 graph_model:
-  cell_model_name: "arbitrary_ode"
-  mesh_model_name: ""
+  cell_model_name: "dicty_spring_force_ode"
   prediction: "first_derivative"
   input_size: 6
   output_size: 3
   hidden_dim: 128
   n_layers: 5
-  aggr_type: "mean"
+  aggr_type: "add"
   embedding_dim: 2
   update_type: "none"
 
 plotting:
   colormap: "tab10"
   arrow_length: 2
-  xlim: [0, 0.2]
-  invert_mlp1_sign: True
+  xlim: [0, 0.14]
 
 inr:
   inr_field_name: "velocity"

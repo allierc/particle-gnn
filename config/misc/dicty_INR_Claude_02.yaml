@@ -43,12 +43,12 @@ inr:
   inr_field_name: velocity
   inr_type: siren_txyz
   inr_gradient_mode: false
-  hidden_dim_inr: 640
-  n_layers_inr: 4
-  omega_inr: 5.0
-  inr_total_steps: 300000
+  hidden_dim_inr: 384
+  n_layers_inr: 3
+  omega_inr: 10.0
+  inr_total_steps: 2000000
   inr_batch_size: 8
-  inr_learning_rate: 2.0e-04
+  inr_learning_rate: 1.0e-04
   inr_xy_period: 1.0
   inr_t_period: 1.0
 training:

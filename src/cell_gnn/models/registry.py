@@ -31,6 +31,7 @@ def _discover_simulators():
     import cell_gnn.generators.arbitrary_ode  # noqa: F401
     import cell_gnn.generators.boids_ode  # noqa: F401
     import cell_gnn.generators.gravity_ode  # noqa: F401
+    import cell_gnn.generators.dicty_spring_force_ode  # noqa: F401
 
 
 def _discover_models():

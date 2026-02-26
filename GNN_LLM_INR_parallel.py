@@ -338,7 +338,7 @@ if __name__ == "__main__":
     llm_dir = f"{root_dir}/LLM"
     exploration_dir = f"{root_dir}/log/Claude_exploration/{instruction_name}_parallel"
 
-    # Fresh start or resume
+    # fresh start or resume
     if args.resume:
         analysis_path_probe = f"{exploration_dir}/{llm_task_name}_analysis.md"
         config_save_dir_probe = f"{exploration_dir}/config"
@@ -346,18 +346,18 @@ if __name__ == "__main__":
         if start_iteration > 1:
             print(f"\033[93mAuto-resume: resuming from batch starting at {start_iteration}\033[0m")
         else:
-            print("\033[93mFresh start (no previous iterations found)\033[0m")
+            print("\033[93mfresh start (no previous iterations found)\033[0m")
     else:
         start_iteration = 1
         _analysis_check = f"{exploration_dir}/{llm_task_name}_analysis.md"
         if os.path.exists(_analysis_check):
-            print("\033[91mWARNING: Fresh start will erase existing results in:\033[0m")
+            print("\033[91mWARNING: fresh start will erase existing results in:\033[0m")
             print(f"\033[91m  {_analysis_check}\033[0m")
             answer = input("\033[91mContinue? (y/n): \033[0m").strip().lower()
             if answer != 'y':
                 print("Aborted.")
                 sys.exit(0)
-        print("\033[93mFresh start\033[0m")
+        print("\033[93mfresh start\033[0m")
 
     # --- Initialize slot configs from source ---
     for cfg in config_list:

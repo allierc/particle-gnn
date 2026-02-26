@@ -385,6 +385,25 @@ def data_generate_cell(
     # create GNN
     model, bc_pos, bc_dpos = choose_model(config=config, device=device)
 
+    # Plot spring force profile for dicty_spring_force_ode
+    if mc.cell_model_name == "dicty_spring_force_ode":
+        r_plot = torch.linspace(0, max_radius, 500, device=device)
+        p = model.p.unsqueeze(0) if model.p.dim() == 1 else model.p
+        fig, ax = plt.subplots(figsize=(8, 5))
+        for n in range(n_cell_types):
+            F = model.psi(r_plot, p[n])
+            ax.plot(to_numpy(r_plot), to_numpy(F), label=f"type {n}")
+        ax.axhline(0, color="k", linewidth=0.5)
+        ax.axvline(to_numpy(p[0, 1]), color="gray", linestyle="--", linewidth=0.5, label=f"r0={p[0,1]:.3f}")
+        ax.axvline(to_numpy(p[0, 3]), color="gray", linestyle=":", linewidth=0.5, label=f"r_on={p[0,3]:.3f}")
+        ax.set_xlabel("r")
+        ax.set_ylabel("F(r)")
+        ax.set_title(f"Spring force profile (mu_f={p[0, 5]:.4f})")
+        ax.legend()
+        plt.tight_layout()
+        fig.savefig(f"graphs_data/{dataset_name}/spring_force_profile.png", dpi=150)
+        plt.close(fig)
+
     cell_dropout_mask = np.arange(n_cells)
     if has_cell_dropout:
         draw = np.random.permutation(np.arange(n_cells))
@@ -617,7 +636,7 @@ def data_generate_cell(
                     plt.tight_layout()
                     active_style.savefig(fig, f"graphs_data/{dataset_name}/Fig/Rot_{run}_Fig{it}.jpg")
 
-                elif (mc.cell_model_name == "arbitrary_ode") & (dimension == 3):
+                elif (mc.cell_model_name in ("arbitrary_ode", "dicty_spring_force_ode")) & (dimension == 3):
                     from mpl_toolkits.mplot3d.art3d import Line3DCollection
                     from matplotlib.collections import LineCollection as LC
 

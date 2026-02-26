@@ -2,7 +2,7 @@
   "python.defaultInterpreterPath": "/workspace/.conda_envs/particle-graph/bin/python",
   "python-envs.pythonProjects": [
     {
-      "path": "",
+      "path": ".",
       "envManager": "ms-python.python:conda",
       "packageManager": "ms-python.python:conda"
     }

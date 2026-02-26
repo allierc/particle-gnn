@@ -149,6 +149,18 @@ def _generate_video(gt_np, pred_np, pos_data, field_name, n_frames, n_components
 
     q_step = max(1, n_cells // 500)
 
+    # Compute global quiver scale and color range from GT for consistency
+    if n_components >= 2:
+        all_mag = np.sqrt((gt_np ** 2).sum(axis=-1))  # (T, N)
+        mag_p98 = np.percentile(all_mag, 98)
+        clim = (0, mag_p98)
+        # quiver scale: data units per arrow length unit
+        quiver_scale = mag_p98 * 20
+    else:
+        all_vals = gt_np[:, :, 0]
+        clim = (np.percentile(all_vals, 2), np.percentile(all_vals, 98))
+        quiver_scale = None
+
     frame_indices = range(0, n_frames, step_video)
     for frame_count, k in enumerate(frame_indices):
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4.5))
@@ -162,13 +174,17 @@ def _generate_video(gt_np, pred_np, pos_data, field_name, n_frames, n_components
         if n_components >= 2:
             mag_gt = np.sqrt((gt_k ** 2).sum(axis=-1))
             mag_pred = np.sqrt((pred_k ** 2).sum(axis=-1))
-            ax1.quiver(x, y, gt_k[::q_step, 0], gt_k[::q_step, 1],
-                       mag_gt[::q_step], cmap='coolwarm', alpha=1.0)
-            ax2.quiver(x, y, pred_k[::q_step, 0], pred_k[::q_step, 1],
-                       mag_pred[::q_step], cmap='coolwarm', alpha=1.0)
+            q1 = ax1.quiver(x, y, gt_k[::q_step, 0], gt_k[::q_step, 1],
+                            mag_gt[::q_step], cmap='coolwarm', alpha=1.0,
+                            scale=quiver_scale, clim=clim)
+            q2 = ax2.quiver(x, y, pred_k[::q_step, 0], pred_k[::q_step, 1],
+                            mag_pred[::q_step], cmap='coolwarm', alpha=1.0,
+                            scale=quiver_scale, clim=clim)
         else:
-            ax1.scatter(x, y, c=gt_k[::q_step, 0], cmap='coolwarm', s=5, alpha=1.0)
-            ax2.scatter(x, y, c=pred_k[::q_step, 0], cmap='coolwarm', s=5, alpha=1.0)
+            ax1.scatter(x, y, c=gt_k[::q_step, 0], cmap='coolwarm', s=5,
+                        alpha=1.0, vmin=clim[0], vmax=clim[1])
+            ax2.scatter(x, y, c=pred_k[::q_step, 0], cmap='coolwarm', s=5,
+                        alpha=1.0, vmin=clim[0], vmax=clim[1])
 
         for ax in (ax1, ax2):
             ax.set_xlim([0, 1]); ax.set_ylim([0, 1])

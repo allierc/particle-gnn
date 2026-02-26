@@ -279,7 +279,7 @@ if __name__ == "__main__":
     llm_dir = f"{root_dir}/LLM"
     exploration_dir = f"{root_dir}/log/Claude_exploration/{instruction_name}_parallel"
 
-    # Fresh start (default) or auto-resume (--resume flag)
+    # fresh start (default) or auto-resume (--resume flag)
     if args.resume:
         analysis_path_probe = f"{exploration_dir}/{llm_task_name}_analysis.md"
         config_save_dir_probe = f"{exploration_dir}/config"
@@ -287,19 +287,19 @@ if __name__ == "__main__":
         if start_iteration > 1:
             print(f"\033[93mAuto-resume: resuming from batch starting at {start_iteration}\033[0m")
         else:
-            print("\033[93mFresh start (no previous iterations found)\033[0m")
+            print("\033[93mfresh start (no previous iterations found)\033[0m")
     else:
         start_iteration = 1
         _analysis_check = f"{exploration_dir}/{llm_task_name}_analysis.md"
         if os.path.exists(_analysis_check):
-            print("\033[91mWARNING: Fresh start will erase existing results in:\033[0m")
+            print("\033[91mWARNING: fresh start will erase existing results in:\033[0m")
             print(f"\033[91m  {_analysis_check}\033[0m")
             print(f"\033[91m  {exploration_dir}/{llm_task_name}_memory.md\033[0m")
             answer = input("\033[91mContinue? (y/n): \033[0m").strip().lower()
             if answer != 'y':
                 print("Aborted.")
                 sys.exit(0)
-        print("\033[93mFresh start\033[0m")
+        print("\033[93mfresh start\033[0m")
 
     # --- Initialize 4 slot configs from source ---
     for cfg in config_list:
@@ -332,7 +332,7 @@ if __name__ == "__main__":
         analysis_log_paths[slot] = f"{exploration_dir}/{slot_name}_analysis.log"
 
         if start_iteration == 1 and not args.resume:
-            # Fresh start: copy source config, keep original dataset (shared data)
+            # fresh start: copy source config, keep original dataset (shared data)
             shutil.copy2(source_config, target)
             with open(target, 'r') as f:
                 config_data = yaml.safe_load(f)

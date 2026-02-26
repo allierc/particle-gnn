@@ -119,12 +119,17 @@ def plot_inr_training_summary(loss_list, gt_np, pred_np, pos_np,
     ax = axes[1, 0]
     pos_mid = pos_np[mid]
     gt_mid = gt_np[mid]
+    pred_mid = pred_np[mid]
     mag_gt = np.sqrt((gt_mid ** 2).sum(axis=-1))
     if n_components >= 2:
         q_step = max(1, n_cells // 500)
+        mag_p98 = np.percentile(mag_gt, 98)
+        qscale = mag_p98 * 20
+        qclim = (0, mag_p98)
         ax.quiver(pos_mid[::q_step, 0], pos_mid[::q_step, 1],
                   gt_mid[::q_step, 0], gt_mid[::q_step, 1],
-                  mag_gt[::q_step], cmap='coolwarm', alpha=1.0)
+                  mag_gt[::q_step], cmap='coolwarm', alpha=1.0,
+                  scale=qscale, clim=qclim)
     else:
         ax.scatter(pos_mid[:, 0], pos_mid[:, 1], c=gt_mid[:, 0], cmap='coolwarm', s=5, alpha=1.0)
     ax.set_xlim([0, 1]); ax.set_ylim([0, 1])
@@ -133,12 +138,12 @@ def plot_inr_training_summary(loss_list, gt_np, pred_np, pos_np,
 
     # bottom-middle: predicted field at frame T/2
     ax = axes[1, 1]
-    pred_mid = pred_np[mid]
     mag_pred = np.sqrt((pred_mid ** 2).sum(axis=-1))
     if n_components >= 2:
         ax.quiver(pos_mid[::q_step, 0], pos_mid[::q_step, 1],
                   pred_mid[::q_step, 0], pred_mid[::q_step, 1],
-                  mag_pred[::q_step], cmap='coolwarm', alpha=1.0)
+                  mag_pred[::q_step], cmap='coolwarm', alpha=1.0,
+                  scale=qscale, clim=qclim)
     else:
         ax.scatter(pos_mid[:, 0], pos_mid[:, 1], c=pred_mid[:, 0], cmap='coolwarm', s=5, alpha=1.0)
     ax.set_xlim([0, 1]); ax.set_ylim([0, 1])
