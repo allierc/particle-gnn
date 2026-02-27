@@ -24,16 +24,17 @@ class DictySpringForceODE(nn.Module):
       g_on  = sigmoid((r - r0) / delta)
       g_off = sigmoid(-(r - r_on) / delta)
       F_adh = -kadh * g_on * g_off * (r - r0) * rhat
-      F     = F_rep + F_adh
+      F     = F_rep + F_adh + noise
     """
 
-    def __init__(self, aggr_type=[], p=[], bc_dpos=[], dimension=3):
+    def __init__(self, aggr_type=[], p=[], bc_dpos=[], dimension=3, noise_model_level=0):
         super().__init__()
 
         self.aggr_type = aggr_type
         self.p = p
         self.bc_dpos = bc_dpos
         self.dimension = dimension
+        self.noise_model_level = noise_model_level
 
     def forward(self, state: CellState, edge_index: torch.Tensor, has_field=False, k=0):
         if has_field:
@@ -52,6 +53,10 @@ class DictySpringForceODE(nn.Module):
 
         messages = self.message(pos_i, pos_j, parameters_i, field_j)
         d_pos = scatter_aggregate(messages, dst, state.n_cells, self.aggr_type)
+
+        if self.noise_model_level > 0:
+            d_pos = d_pos + self.noise_model_level * torch.randn_like(d_pos)
+
         return d_pos
 
     def message(self, pos_i, pos_j, parameters_i, field_j):

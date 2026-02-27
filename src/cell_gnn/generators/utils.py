@@ -56,7 +56,9 @@ def choose_model(config=[], W=[], device=[]):
             model = sim_cls(aggr_type=aggr_type, p=p, clamp=config.training.clamp,
                             pred_limit=config.training.pred_limit, bc_dpos=bc_dpos, dimension=dimension)
         case 'dicty_spring_force_ode':
-            model = sim_cls(aggr_type=aggr_type, p=p, bc_dpos=bc_dpos, dimension=dimension)
+            noise_model_level = config.simulation.noise_model_level if hasattr(config.simulation, 'noise_model_level') else 0
+            model = sim_cls(aggr_type=aggr_type, p=p, bc_dpos=bc_dpos, dimension=dimension,
+                            noise_model_level=noise_model_level)
         case _:
             raise ValueError(f'Unknown cell model: {cell_model_name}')
 
