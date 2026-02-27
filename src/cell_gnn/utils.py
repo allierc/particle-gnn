@@ -305,7 +305,7 @@ def get_log_dir(config=[]):
 
 def create_log_dir(config=[], erase=True):
 
-    log_dir = os.path.join('.', 'log', config.config_file)
+    log_dir = os.path.join('.', 'log', config.dataset)
     print('log_dir: {}'.format(log_dir))
 
     os.makedirs(log_dir, exist_ok=True)

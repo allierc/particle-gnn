@@ -250,7 +250,7 @@ def data_train_INR(config, device, field_name=None, run=0, erase=False):
     dimension = sim.dimension
     dataset_name = config.dataset
     data_folder = f'graphs_data/{dataset_name}'
-    log_dir = f'log/{config.config_file}'
+    log_dir = f'log/{config.dataset}'
 
     if field_name is None:
         field_name = inr_cfg.inr_field_name

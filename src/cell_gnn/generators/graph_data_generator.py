@@ -346,7 +346,7 @@ def data_generate_cell(
     tc = config.training
     mc = config.graph_model
 
-    print(f"generating data ... {mc.cell_model_name}")
+    print(f"generating data ... {mc.cell_model_name}  integration: {mc.integration}")
 
     dimension = sim.dimension
     max_radius = sim.max_radius
@@ -539,12 +539,21 @@ def data_generate_cell(
                 x_writer.append_state(x.detach())
                 y_writer.append(to_numpy(y.clone().detach()))
 
-        # cell update
-        if mc.prediction == "2nd_derivative":
-            x.vel = x.vel + y * delta_t
+        # cell update (Euler or RK4)
+        has_angular_noise = sim.angular_sigma > 0 or sim.angular_bernoulli != [-1]
+        if mc.integration == 'Runge-Kutta' and not has_angular_noise:
+            def _deriv_fn(s):
+                ei = get_edges_with_cache(
+                    pos=s.pos, bc_dpos=bc_dpos, cache=edge_cache,
+                    r_cut=max_radius, r_skin=0.05,
+                    min_radius=min_radius, block=2048,
+                )
+                return model(s, ei)
+            from cell_gnn.integrators import rk4_step
+            x, _ = rk4_step(x, _deriv_fn, delta_t, mc.prediction, bc_pos)
         else:
-            x.vel = y
-        x.pos = bc_pos(x.pos + x.vel * delta_t)
+            from cell_gnn.integrators import euler_step
+            euler_step(x, y, delta_t, mc.prediction, bc_pos)
 
         # output plots
         if visualize & (run == run_vizualized) & (it % step == 0) & (it >= 0):
@@ -1055,30 +1064,51 @@ def data_generate_cell_field(
             x_mesh_writer.append_state(mesh_state.detach())
             y_mesh_writer.append(np.zeros((n_nodes, 2), dtype=np.float32))
 
-        # cell update
+        # cell update (Euler or RK4)
         with torch.no_grad():
-            if mc.prediction == "2nd_derivative":
-                x.vel = x.vel + y * delta_t
+            if mc.integration == 'Runge-Kutta' and not bounce:
+                def _deriv_fn_field(s):
+                    ei = get_edges_with_cache(
+                        pos=s.pos, bc_dpos=bc_dpos, cache=edge_cache,
+                        r_cut=max_radius, r_skin=0.05,
+                        min_radius=min_radius, block=2048,
+                    )
+                    s_packed = s.to_packed()
+                    s_pf = torch.concatenate((x_mesh_packed, s_packed), dim=0)
+                    s_pf_state = CellState.from_packed(s_pf, dimension)
+                    pos_pf_ = s_pf_state.pos
+                    dist2 = torch.sum(bc_dpos(pos_pf_[:, None, :] - pos_pf_[None, :, :]) ** 2, dim=2)
+                    adj_ = ((dist2 < (max_radius / 2) ** 2) & (dist2 > min_radius ** 2)).float()
+                    ei_fp = adj_.nonzero().t().contiguous()
+                    idx_ = torch.argwhere((ei_fp[1, :] >= n_nodes) & (ei_fp[0, :] < n_nodes))
+                    ei_fp = ei_fp[:, idx_[:, 0]]
+                    y0_ = model(s, ei, has_field=False)
+                    y1_ = model(s_pf_state, ei_fp, has_field=True)[n_nodes:]
+                    return y0_ + y1_
+                from cell_gnn.integrators import rk4_step
+                x, _ = rk4_step(x, _deriv_fn_field, delta_t, mc.prediction, bc_pos)
             else:
-                x.vel = y
-
-            if bounce:
-                x.pos = x.pos + x.vel * delta_t
-                gap = 0.005
-                bouncing_pos = torch.argwhere(
-                    (x.pos[:, 0] <= 0.1 + gap) | (x.pos[:, 0] >= 0.9 - gap)
-                ).squeeze()
-                if bouncing_pos.numel() > 0:
-                    x.vel[bouncing_pos, 0] = -0.7 * bounce_coeff * x.vel[bouncing_pos, 0]
-                    x.pos[bouncing_pos, 0] = x.pos[bouncing_pos, 0] + x.vel[bouncing_pos, 0] * delta_t * 10
-                bouncing_pos = torch.argwhere(
-                    (x.pos[:, 1] <= 0.1 + gap) | (x.pos[:, 1] >= 0.9 - gap)
-                ).squeeze()
-                if bouncing_pos.numel() > 0:
-                    x.vel[bouncing_pos, 1] = -0.7 * bounce_coeff * x.vel[bouncing_pos, 1]
-                    x.pos[bouncing_pos, 1] = x.pos[bouncing_pos, 1] + x.vel[bouncing_pos, 1] * delta_t * 10
-            else:
-                x.pos = bc_pos(x.pos + x.vel * delta_t)
+                if mc.prediction == "2nd_derivative":
+                    x.vel = x.vel + y * delta_t
+                else:
+                    x.vel = y
+                if bounce:
+                    x.pos = x.pos + x.vel * delta_t
+                    gap = 0.005
+                    bouncing_pos = torch.argwhere(
+                        (x.pos[:, 0] <= 0.1 + gap) | (x.pos[:, 0] >= 0.9 - gap)
+                    ).squeeze()
+                    if bouncing_pos.numel() > 0:
+                        x.vel[bouncing_pos, 0] = -0.7 * bounce_coeff * x.vel[bouncing_pos, 0]
+                        x.pos[bouncing_pos, 0] = x.pos[bouncing_pos, 0] + x.vel[bouncing_pos, 0] * delta_t * 10
+                    bouncing_pos = torch.argwhere(
+                        (x.pos[:, 1] <= 0.1 + gap) | (x.pos[:, 1] >= 0.9 - gap)
+                    ).squeeze()
+                    if bouncing_pos.numel() > 0:
+                        x.vel[bouncing_pos, 1] = -0.7 * bounce_coeff * x.vel[bouncing_pos, 1]
+                        x.pos[bouncing_pos, 1] = x.pos[bouncing_pos, 1] + x.vel[bouncing_pos, 1] * delta_t * 10
+                else:
+                    x.pos = bc_pos(x.pos + x.vel * delta_t)
 
         if visualize & (run == run_vizualized) & (it % step == 0) & (it >= 0):
             num = f"{id_fig:06}"

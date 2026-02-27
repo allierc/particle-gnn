@@ -313,6 +313,7 @@ def data_train_cell(config, erase, best_model, device, log_file=None):
                         xs = states_batch[b].clone().detach()
                         n_b = xs.n_cells
 
+                        # Training rollouts always use Euler (RK4 would be 4x cost through autograd)
                         pred_b = pred[ids_index:ids_index + n_b] * ynorm
                         if mc.prediction == '2nd_derivative':
                             xs.vel = xs.vel + pred_b * delta_t
@@ -347,6 +348,8 @@ def data_train_cell(config, erase, best_model, device, log_file=None):
                 else:
                     loss = (pred - y_batch).norm(2)
             elif time_step > 1:
+                # Multi-step position prediction (algebraic formula, not actual time-stepping;
+                # stays Euler even when integration='Runge-Kutta')
                 pos_batch = batch_state.pos
                 vel_batch = batch_state.vel
                 if mc.prediction == '2nd_derivative':
@@ -553,7 +556,7 @@ def data_test_cell(config=None, config_file=None, visualize=False, style='color 
         n_nodes = sim.n_nodes
         n_nodes_per_axis = int(np.sqrt(n_nodes))
 
-    log_dir = 'log/' + config.config_file
+    log_dir = 'log/' + config.dataset
     os.makedirs(f"./{log_dir}/tmp_recons", exist_ok=True)
     files = glob.glob(f"./{log_dir}/tmp_recons/*")
     for f in files:
@@ -760,6 +763,8 @@ def data_test_cell(config=None, config_file=None, visualize=False, style='color 
                 loss = (x.pos - x0_next.pos).norm(2)
                 pred_err_list.append(to_numpy(torch.sqrt(loss)))
             elif do_tracking:
+                # Multi-step tracking prediction (algebraic approximation for matching;
+                # stays Euler even when integration='Runge-Kutta')
                 x_pos_next = x0_next.pos.clone().detach()
                 if pred.shape[1] != dimension:
                     pred = torch.cat((pred, torch.zeros(pred.shape[0], 1, device=pred.device)), dim=1)
@@ -778,13 +783,27 @@ def data_test_cell(config=None, config_file=None, visualize=False, style='color 
                     x.vel = pred.clone().detach() / (delta_t * time_step)
 
             else:
-                if mc.prediction == '2nd_derivative':
-                    y = y * ynorm * delta_t
-                    x.vel[:n_cells] = x.vel[:n_cells] + y[:n_cells]  # speed update
+                if mc.integration == 'Runge-Kutta':
+                    def _test_deriv_fn(s):
+                        ei = edges_radius_blockwise(s.pos, bc_dpos, min_radius, max_radius, block=4096)
+                        if has_field:
+                            s.field = model_f(time=it / n_frames) ** 2
+                        p = model(s, ei, data_id=data_id, training=False, has_field=has_field, k=it)
+                        if mc.prediction == '2nd_derivative':
+                            return p * ynorm
+                        else:
+                            return p * vnorm
+                    from cell_gnn.integrators import rk4_step
+                    x, _ = rk4_step(x, _test_deriv_fn, delta_t, mc.prediction, bc_pos,
+                                    n_active=n_cells)
                 else:
-                    y = y * vnorm
-                    x.vel[:n_cells] = y[:n_cells]
-                x.pos = bc_pos(x.pos + x.vel * delta_t)  # position update
+                    if mc.prediction == '2nd_derivative':
+                        y = y * ynorm * delta_t
+                        x.vel[:n_cells] = x.vel[:n_cells] + y[:n_cells]  # speed update
+                    else:
+                        y = y * vnorm
+                        x.vel[:n_cells] = y[:n_cells]
+                    x.pos = bc_pos(x.pos + x.vel * delta_t)  # position update
 
             if 'inference' in test_mode:
                 x_inference_list.append(x)
